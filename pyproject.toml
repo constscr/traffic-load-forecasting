@@ -1,0 +1,56 @@
+[project]
+name = "traffic-load-forecasting"
+version = "0.1.0"
+description = "Traffic load forecasting using ensemble machine learning methods"
+readme = "README.md"
+authors = [
+    {name = "constscr",email = "golubevk2002@gmail.com"}
+]
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "numpy (>=2.4.6,<3.0.0)",
+    "pandas (>=3.0.3,<4.0.0)",
+    "scikit-learn (>=1.9.0,<2.0.0)",
+    "matplotlib (>=3.10.9,<4.0.0)",
+    "seaborn (>=0.13.2,<0.14.0)",
+    "joblib (>=1.5.3,<2.0.0)"
+]
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.0.3,<10.0.0)",
+    "ruff (>=0.15.16,<0.16.0)",
+    "pre-commit (>=4.6.0,<5.0.0)",
+    "jupyter (>=1.1.1,<2.0.0)",
+    "ipykernel (>=7.2.0,<8.0.0)",
+    "notebook (>=7.5.7,<8.0.0)"
+]
+
+[tool.poetry]
+packages = [
+    { include = "traffic_forecasting", from = "src" }
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "scripts", "tests"]
+extend-include = ["*.ipynb"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
