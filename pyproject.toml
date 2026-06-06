@@ -31,6 +31,26 @@ packages = [
     { include = "traffic_forecasting", from = "src" }
 ]
 
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "scripts", "tests"]
+extend-include = ["*.ipynb"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
