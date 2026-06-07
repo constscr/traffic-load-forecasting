@@ -24,6 +24,7 @@ def load_raw_data(file_path: Path = RAW_DATA_PATH) -> pd.DataFrame:
 
     data = pd.read_csv(file_path)
 
+    # The timestamp and target columns define the forecasting task.
     missing_columns = REQUIRED_COLUMNS.difference(data.columns)
     if missing_columns:
         missing = ", ".join(sorted(missing_columns))
@@ -38,10 +39,12 @@ def load_raw_data(file_path: Path = RAW_DATA_PATH) -> pd.DataFrame:
 
     data = data.sort_values(DATETIME_COLUMN).reset_index(drop=True)
 
+    # Resolve timestamp collisions before checking the regular hourly grid.
     duplicate_timestamp_rows = count_duplicate_timestamps(data)
     if duplicate_timestamp_rows:
         data = resolve_duplicate_timestamps(data)
 
+    # Keep missing values explicit; imputation is handled in later pipeline stages.
     missing_timestamps = find_missing_timestamps(data)
     if len(missing_timestamps) > 0:
         data = make_hourly_time_grid(data)
@@ -64,6 +67,7 @@ def count_duplicate_timestamps(data: pd.DataFrame) -> int:
 
 def resolve_duplicate_timestamps(data: pd.DataFrame) -> pd.DataFrame:
     """Aggregate rows sharing the same timestamp using deterministic rules."""
+    # Multiple weather descriptions may refer to the same traffic observation hour.
     return (
         data.groupby(DATETIME_COLUMN, as_index=False, sort=True)
         .agg(_build_timestamp_aggregation_rules(data))
@@ -102,6 +106,7 @@ def make_hourly_time_grid(data: pd.DataFrame) -> pd.DataFrame:
         name=DATETIME_COLUMN,
     )
 
+    # Missing hours remain empty so later stages can choose an explicit strategy.
     return data.reindex(full_time_grid).rename_axis(DATETIME_COLUMN).reset_index()
 
 
@@ -114,6 +119,7 @@ def _build_timestamp_aggregation_rules(data: pd.DataFrame) -> dict[str, object]:
             continue
 
         if column in MAX_AGGREGATION_COLUMNS:
+            # Retain the strongest precipitation report for each observation hour.
             rules[column] = "max"
         elif is_numeric_dtype(data[column]):
             rules[column] = "median"

@@ -22,6 +22,7 @@ def fetch_dataset_from_uci(dataset_id: int = UCI_DATASET_ID) -> pd.DataFrame:
     if features is None or targets is None:
         raise ValueError("UCI response does not contain features or targets.")
 
+    # Preserve the source feature order and append the target as the final column.
     return pd.concat([features, targets], axis=1)
 
 

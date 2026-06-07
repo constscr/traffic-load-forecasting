@@ -147,6 +147,7 @@ def test_load_raw_data_adds_missing_hours_without_filling_values(tmp_path: Path)
     expected_datetime_series = pd.Series(expected_timestamps, name=DATETIME_COLUMN)
     added_row = result.loc[result[DATETIME_COLUMN] == pd.Timestamp("2026-01-01 01:00:00")]
 
+    # The inserted hour keeps the time grid regular without synthetic target values.
     assert missing_timestamps.equals(
         pd.DatetimeIndex([pd.Timestamp("2026-01-01 01:00:00")], name=DATETIME_COLUMN)
     )
