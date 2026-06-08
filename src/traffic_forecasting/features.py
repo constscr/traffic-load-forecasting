@@ -97,3 +97,22 @@ def add_rolling_features(data: pd.DataFrame) -> pd.DataFrame:
         result[f"{TARGET_COLUMN}_rolling_std_{window}"] = rolling_window.std(ddof=0)
 
     return result
+
+
+def drop_incomplete_feature_rows(data: pd.DataFrame) -> pd.DataFrame:
+    """Remove rows without a target or complete historical feature values."""
+    # Drop technical gaps only after all historical features have been created.
+    required_columns = [TARGET_COLUMN, *HISTORICAL_FEATURE_COLUMNS]
+    return data.dropna(subset=required_columns).sort_values(DATETIME_COLUMN).reset_index(drop=True)
+
+
+def build_feature_dataset(data: pd.DataFrame) -> pd.DataFrame:
+    """Build the complete feature dataset while preserving chronology."""
+    result = data.sort_values(DATETIME_COLUMN).reset_index(drop=True).copy()
+    result = add_time_features(result)
+    result = add_calendar_features(result)
+    result = add_cyclical_features(result)
+    result = add_weather_features(result)
+    result = add_lag_features(result)
+    result = add_rolling_features(result)
+    return drop_incomplete_feature_rows(result)
