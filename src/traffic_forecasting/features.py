@@ -1,7 +1,12 @@
 import numpy as np
 import pandas as pd
 
-from traffic_forecasting.config import DATETIME_COLUMN
+from traffic_forecasting.config import (
+    DATETIME_COLUMN,
+    LAG_HOURS,
+    ROLLING_WINDOWS,
+    TARGET_COLUMN,
+)
 
 # Weather-related columns in the dataset, categorized by data type for processing.
 WEATHER_NUMERIC_COLUMNS = ("temp", "rain_1h", "snow_1h", "clouds_all")
@@ -15,6 +20,17 @@ WEEKEND_DAYS = (5, 6)
 
 # Offset to convert temperature from Kelvin to Celsius.
 KELVIN_TO_CELSIUS_OFFSET = 273.15
+
+LAG_FEATURE_COLUMNS = tuple(f"{TARGET_COLUMN}_lag_{lag_hours}" for lag_hours in LAG_HOURS)
+ROLLING_FEATURE_COLUMNS = tuple(
+    feature_name
+    for window in ROLLING_WINDOWS
+    for feature_name in (
+        f"{TARGET_COLUMN}_rolling_mean_{window}",
+        f"{TARGET_COLUMN}_rolling_std_{window}",
+    )
+)
+HISTORICAL_FEATURE_COLUMNS = (*LAG_FEATURE_COLUMNS, *ROLLING_FEATURE_COLUMNS)
 
 
 def add_time_features(data: pd.DataFrame) -> pd.DataFrame:
@@ -53,4 +69,31 @@ def add_weather_features(data: pd.DataFrame) -> pd.DataFrame:
     """Preserve weather columns and add temperature in degrees Celsius."""
     result = data.copy()
     result["temp_celsius"] = result["temp"] - KELVIN_TO_CELSIUS_OFFSET
+    return result
+
+
+def add_lag_features(data: pd.DataFrame) -> pd.DataFrame:
+    """Add historical traffic values at configured hourly offsets."""
+    result = data.copy()
+    for lag_hours, column in zip(
+        LAG_HOURS,
+        LAG_FEATURE_COLUMNS,
+        strict=True,
+    ):
+        result[column] = result[TARGET_COLUMN].shift(lag_hours)
+    return result
+
+
+def add_rolling_features(data: pd.DataFrame) -> pd.DataFrame:
+    """Add rolling traffic statistics calculated from past values only."""
+    result = data.copy()
+    # Shift first to exclude the current target value from rolling statistics.
+    past_target = result[TARGET_COLUMN].shift(1)
+
+    for window in ROLLING_WINDOWS:
+        rolling_window = past_target.rolling(window=window)
+        result[f"{TARGET_COLUMN}_rolling_mean_{window}"] = rolling_window.mean()
+        # Use population standard deviation (ddof=0) to avoid NaN values for small windows.
+        result[f"{TARGET_COLUMN}_rolling_std_{window}"] = rolling_window.std(ddof=0)
+
     return result
