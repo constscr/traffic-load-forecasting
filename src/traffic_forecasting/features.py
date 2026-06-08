@@ -3,11 +3,18 @@ import pandas as pd
 
 from traffic_forecasting.config import DATETIME_COLUMN
 
+# Weather-related columns in the dataset, categorized by data type for processing.
+WEATHER_NUMERIC_COLUMNS = ("temp", "rain_1h", "snow_1h", "clouds_all")
+WEATHER_CATEGORICAL_COLUMNS = ("weather_main", "weather_description")
+
 # Time constants for feature engineering
 HOURS_PER_DAY = 24
 DAYS_PER_WEEK = 7
 MONTHS_PER_YEAR = 12
 WEEKEND_DAYS = (5, 6)
+
+# Offset to convert temperature from Kelvin to Celsius.
+KELVIN_TO_CELSIUS_OFFSET = 273.15
 
 
 def add_time_features(data: pd.DataFrame) -> pd.DataFrame:
@@ -39,4 +46,11 @@ def add_cyclical_features(data: pd.DataFrame) -> pd.DataFrame:
     month_position = result["month"] - 1
     result["month_sin"] = np.sin(2 * np.pi * month_position / MONTHS_PER_YEAR)
     result["month_cos"] = np.cos(2 * np.pi * month_position / MONTHS_PER_YEAR)
+    return result
+
+
+def add_weather_features(data: pd.DataFrame) -> pd.DataFrame:
+    """Preserve weather columns and add temperature in degrees Celsius."""
+    result = data.copy()
+    result["temp_celsius"] = result["temp"] - KELVIN_TO_CELSIUS_OFFSET
     return result
