@@ -23,5 +23,8 @@ TARGET_COLUMN = "traffic_volume"
 TIME_FREQUENCY = "h"
 FORECAST_HORIZON = 1
 
+# Lag values selected for short-term, daily, and weekly traffic dependencies
+LAG_HOURS = (1, 2, 3, 24, 168)
+
 # Reproducibility
 RANDOM_STATE = 42
