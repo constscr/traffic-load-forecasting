@@ -36,3 +36,15 @@ def build_knn_regressor() -> RegressorMixin:
 def build_svr_regressor() -> RegressorMixin:
     """Build a support-vector regression baseline."""
     return SVR()
+
+
+def get_baseline_model_registry() -> dict[str, RegressorMixin]:
+    """Return fresh baseline model instances in comparison order."""
+    return {
+        "dummy_mean": build_dummy_regressor(),
+        "linear_regression": build_linear_regression(),
+        "ridge": build_ridge_regressor(),
+        "decision_tree": build_decision_tree_regressor(),
+        "knn": build_knn_regressor(),
+        "svr": build_svr_regressor(),
+    }
