@@ -1,6 +1,10 @@
 import math
 
 import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from traffic_forecasting.config import (
     DATETIME_COLUMN,
@@ -154,4 +158,78 @@ def prepare_model_inputs(
         timestamps_train,
         timestamps_validation,
         timestamps_test,
+    )
+
+
+def build_preprocessor() -> ColumnTransformer:
+    """Build preprocessing for numeric, categorical, and passthrough features."""
+    feature_groups = get_model_feature_groups()
+
+    continuous_pipeline = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
+            ("scaler", StandardScaler()),
+        ]
+    )
+    categorical_pipeline = Pipeline(
+        steps=[
+            (
+                "imputer",
+                SimpleImputer(
+                    strategy="constant",
+                    fill_value="unknown",
+                    keep_empty_features=True,
+                ),
+            ),
+            ("encoder", OneHotEncoder(handle_unknown="ignore")),
+        ]
+    )
+
+    # Binary indicators and cyclical encodings already have model-ready scales.
+    return ColumnTransformer(
+        transformers=[
+            (
+                "continuous",
+                continuous_pipeline,
+                feature_groups["continuous_numeric"],
+            ),
+            (
+                "categorical",
+                categorical_pipeline,
+                feature_groups["categorical"],
+            ),
+            ("binary", "passthrough", feature_groups["binary"]),
+            ("cyclical", "passthrough", feature_groups["cyclical"]),
+        ],
+        remainder="drop",
+    )
+
+
+def transform_model_inputs(
+    X_train: pd.DataFrame,
+    X_validation: pd.DataFrame,
+    X_test: pd.DataFrame,
+) -> tuple[object, object, object, ColumnTransformer]:
+    """Fit preprocessing on train only and transform validation and test splits."""
+    expected_columns = list(get_model_feature_columns())
+
+    for split_name, split_data in {
+        "X_train": X_train,
+        "X_validation": X_validation,
+        "X_test": X_test,
+    }.items():
+        if list(split_data.columns) != expected_columns:
+            raise ValueError(f"{split_name} columns do not match expected model feature order.")
+
+    preprocessor = build_preprocessor()
+
+    X_train_transformed = preprocessor.fit_transform(X_train)
+    X_validation_transformed = preprocessor.transform(X_validation)
+    X_test_transformed = preprocessor.transform(X_test)
+
+    return (
+        X_train_transformed,
+        X_validation_transformed,
+        X_test_transformed,
+        preprocessor,
     )
