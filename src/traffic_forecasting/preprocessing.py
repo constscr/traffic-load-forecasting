@@ -100,3 +100,58 @@ def split_chronologically(
         raise ValueError("Validation and test timestamps must be strictly ordered.")
 
     return train, validation, test
+
+
+def _prepare_single_split(
+    data: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+    required_columns = (DATETIME_COLUMN, TARGET_COLUMN)
+    missing_columns = [column for column in required_columns if column not in data.columns]
+    if missing_columns:
+        raise ValueError(f"Missing required columns: {missing_columns}")
+
+    if not data[DATETIME_COLUMN].is_monotonic_increasing:
+        raise ValueError("Input split must be sorted chronologically.")
+
+    features = select_model_features(data)
+
+    forbidden_columns = sorted(set(features.columns) & set(EXCLUDED_MODEL_COLUMNS))
+    if forbidden_columns:
+        raise ValueError(f"Forbidden columns found in model features: {forbidden_columns}")
+
+    target = data[TARGET_COLUMN].copy()
+    timestamps = data[DATETIME_COLUMN].copy()
+    return features, target, timestamps
+
+
+def prepare_model_inputs(
+    train: pd.DataFrame,
+    validation: pd.DataFrame,
+    test: pd.DataFrame,
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.Series,
+    pd.Series,
+    pd.Series,
+    pd.Series,
+    pd.Series,
+    pd.Series,
+]:
+    """Separate model features, targets, and timestamps for each split."""
+    X_train, y_train, timestamps_train = _prepare_single_split(train)
+    X_validation, y_validation, timestamps_validation = _prepare_single_split(validation)
+    X_test, y_test, timestamps_test = _prepare_single_split(test)
+
+    return (
+        X_train,
+        X_validation,
+        X_test,
+        y_train,
+        y_validation,
+        y_test,
+        timestamps_train,
+        timestamps_validation,
+        timestamps_test,
+    )
