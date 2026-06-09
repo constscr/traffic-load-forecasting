@@ -29,5 +29,10 @@ LAG_HOURS = (1, 2, 3, 24, 168)
 # Rolling window sizes for moving average features to capture short-term and weekly trends
 ROLLING_WINDOWS = (3, 6)
 
+# Default proportions for chronological train, validation, and test splits
+TRAIN_SIZE = 0.70
+VALIDATION_SIZE = 0.10
+TEST_SIZE = 0.20
+
 # Reproducibility
 RANDOM_STATE = 42
