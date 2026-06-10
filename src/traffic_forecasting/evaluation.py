@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 
 import numpy as np
+import pandas as pd
 from sklearn.metrics import (
     make_scorer,
     mean_absolute_error,
@@ -66,3 +67,32 @@ def get_tuning_scoring() -> dict[str, str | object]:
         ),
         "r2": "r2",
     }
+
+
+def summarize_time_series_splits(
+    n_samples: int,
+    splitter: TimeSeriesSplit | None = None,
+) -> pd.DataFrame:
+    """Summarize expanding train and validation boundaries for audit."""
+    if n_samples <= 0:
+        raise ValueError("n_samples must be positive.")
+
+    cv = splitter or build_time_series_split()
+    rows = []
+    for fold, (train_indices, validation_indices) in enumerate(
+        cv.split(np.arange(n_samples)),
+        start=1,
+    ):
+        rows.append(
+            {
+                "fold": fold,
+                "train_start": int(train_indices[0]),
+                "train_end": int(train_indices[-1]),
+                "train_size": len(train_indices),
+                "validation_start": int(validation_indices[0]),
+                "validation_end": int(validation_indices[-1]),
+                "validation_size": len(validation_indices),
+            }
+        )
+
+    return pd.DataFrame(rows)
