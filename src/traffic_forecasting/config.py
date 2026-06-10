@@ -9,6 +9,7 @@ INTERIM_DATA_DIR = DATA_DIR / "interim"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
 
 REPORTS_DIR = PROJECT_ROOT / "reports"
+METRICS_DIR = REPORTS_DIR / "metrics"
 ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
 
 # Raw dataset configuration
@@ -33,6 +34,9 @@ ROLLING_WINDOWS = (3, 6)
 TRAIN_SIZE = 0.70
 VALIDATION_SIZE = 0.10
 TEST_SIZE = 0.20
+
+# Baseline evaluation outputs
+BASELINE_METRICS_PATH = METRICS_DIR / "baseline_model_metrics.csv"
 
 # Reproducibility
 RANDOM_STATE = 42
