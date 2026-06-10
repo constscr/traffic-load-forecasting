@@ -10,6 +10,7 @@ from traffic_forecasting.pipeline import (
     build_model_comparison,
     build_tuning_pipeline,
     save_baseline_metrics,
+    save_model_tuning_results,
     train_and_evaluate_baselines,
     train_and_evaluate_ensembles,
     tune_and_compare_models,
@@ -281,3 +282,39 @@ def test_tune_and_compare_models_returns_default_and_tuned_validation_metrics() 
     assert set(tuning_results["model"]) == {"ridge"}
     assert tuning_results["rank"].tolist() == [1]
     assert np.isfinite(comparison[["mae", "rmse", "mape", "r2"]].to_numpy()).all()
+
+
+def test_save_model_tuning_results_writes_all_tables(tmp_path) -> None:
+    comparison = pd.DataFrame({"model": ["ridge"], "rmse": [400.0]})
+    best_parameters = pd.DataFrame(
+        {
+            "model": ["ridge"],
+            "best_parameters": ['{"model__alpha": 10.0}'],
+        }
+    )
+    tuning_results = pd.DataFrame(
+        {
+            "model": ["ridge"],
+            "rank": [1],
+            "mean_cv_rmse": [450.0],
+        }
+    )
+    paths = (
+        tmp_path / "comparison.csv",
+        tmp_path / "best_parameters.csv",
+        tmp_path / "tuning_results.csv",
+    )
+
+    saved_paths = save_model_tuning_results(
+        comparison,
+        best_parameters,
+        tuning_results,
+        comparison_path=paths[0],
+        best_params_path=paths[1],
+        tuning_results_path=paths[2],
+    )
+
+    assert saved_paths == paths
+    pd.testing.assert_frame_equal(pd.read_csv(paths[0]), comparison)
+    pd.testing.assert_frame_equal(pd.read_csv(paths[1]), best_parameters)
+    pd.testing.assert_frame_equal(pd.read_csv(paths[2]), tuning_results)
