@@ -1,15 +1,20 @@
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.utils.validation import check_is_fitted
 
 from traffic_forecasting.config import DATETIME_COLUMN, RANDOM_STATE, TARGET_COLUMN
 from traffic_forecasting.pipeline import (
     build_model_comparison,
+    build_tuning_pipeline,
     save_baseline_metrics,
+    save_model_tuning_results,
     train_and_evaluate_baselines,
     train_and_evaluate_ensembles,
+    tune_and_compare_models,
+    tune_model_with_time_series_cv,
 )
 from traffic_forecasting.preprocessing import (
     get_model_feature_groups,
@@ -220,3 +225,96 @@ def test_build_model_comparison_labels_groups_and_ranks_by_rmse() -> None:
 
     assert comparison["model"].tolist() == ["random_forest", "decision_tree"]
     assert comparison["model_group"].tolist() == ["core_ensemble", "baseline"]
+
+
+class _FitSizeRecorder(BaseEstimator, TransformerMixin):
+    fit_sizes: list[int] = []
+
+    def fit(self, X, y=None):
+        self.fit_sizes.append(len(X))
+        return self
+
+    def transform(self, X):
+        return np.asarray(X, dtype=float)
+
+
+def test_tuning_pipeline_places_preprocessing_before_model() -> None:
+    pipeline = build_tuning_pipeline(GradientBoostingRegressor(random_state=RANDOM_STATE))
+
+    assert list(pipeline.named_steps) == ["preprocessing", "model"]
+
+
+def test_tuning_fits_preprocessing_inside_each_time_series_fold(monkeypatch) -> None:
+    X_train = pd.DataFrame({"feature": np.arange(20, dtype=float)})
+    y_train = pd.Series(np.arange(20, dtype=float))
+    _FitSizeRecorder.fit_sizes = []
+    monkeypatch.setattr(
+        "traffic_forecasting.pipeline.build_preprocessor",
+        _FitSizeRecorder,
+    )
+
+    search = tune_model_with_time_series_cv(
+        "ridge",
+        X_train,
+        y_train,
+        n_iter=1,
+    )
+
+    assert search.refit == "rmse"
+    assert _FitSizeRecorder.fit_sizes == [5, 10, 15, 20]
+
+
+def test_tune_and_compare_models_returns_default_and_tuned_validation_metrics() -> None:
+    X_train, X_validation, _, y_train, y_validation, _ = _prepare_inputs()
+
+    comparison, best_parameters, tuning_results = tune_and_compare_models(
+        X_train,
+        y_train,
+        X_validation,
+        y_validation,
+        model_names=("ridge",),
+        n_iter=1,
+    )
+
+    assert comparison["configuration"].tolist() == ["default", "tuned"]
+    assert set(comparison["model"]) == {"ridge"}
+    assert set(best_parameters["model"]) == {"ridge"}
+    assert set(tuning_results["model"]) == {"ridge"}
+    assert tuning_results["rank"].tolist() == [1]
+    assert np.isfinite(comparison[["mae", "rmse", "mape", "r2"]].to_numpy()).all()
+
+
+def test_save_model_tuning_results_writes_all_tables(tmp_path) -> None:
+    comparison = pd.DataFrame({"model": ["ridge"], "rmse": [400.0]})
+    best_parameters = pd.DataFrame(
+        {
+            "model": ["ridge"],
+            "best_parameters": ['{"model__alpha": 10.0}'],
+        }
+    )
+    tuning_results = pd.DataFrame(
+        {
+            "model": ["ridge"],
+            "rank": [1],
+            "mean_cv_rmse": [450.0],
+        }
+    )
+    paths = (
+        tmp_path / "comparison.csv",
+        tmp_path / "best_parameters.csv",
+        tmp_path / "tuning_results.csv",
+    )
+
+    saved_paths = save_model_tuning_results(
+        comparison,
+        best_parameters,
+        tuning_results,
+        comparison_path=paths[0],
+        best_params_path=paths[1],
+        tuning_results_path=paths[2],
+    )
+
+    assert saved_paths == paths
+    pd.testing.assert_frame_equal(pd.read_csv(paths[0]), comparison)
+    pd.testing.assert_frame_equal(pd.read_csv(paths[1]), best_parameters)
+    pd.testing.assert_frame_equal(pd.read_csv(paths[2]), tuning_results)

@@ -1,22 +1,37 @@
+import json
 from pathlib import Path
 
 import pandas as pd
-from sklearn.base import RegressorMixin
+from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.compose import ColumnTransformer
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.pipeline import Pipeline
 
 from traffic_forecasting.config import (
     BASELINE_METRICS_PATH,
     ENSEMBLE_METRICS_PATH,
     MODEL_COMPARISON_PATH,
+    RANDOM_STATE,
+    TUNING_BEST_PARAMS_PATH,
+    TUNING_COMPARISON_PATH,
+    TUNING_N_ITER,
+    TUNING_RESULTS_PATH,
 )
 from traffic_forecasting.data_loader import load_raw_data
-from traffic_forecasting.evaluation import calculate_regression_metrics
+from traffic_forecasting.evaluation import (
+    build_time_series_split,
+    calculate_regression_metrics,
+    get_tuning_scoring,
+)
 from traffic_forecasting.features import build_feature_dataset
 from traffic_forecasting.models import (
     get_baseline_model_registry,
     get_core_ensemble_model_registry,
+    get_hyperparameter_search_spaces,
+    get_tuning_model_registry,
 )
 from traffic_forecasting.preprocessing import (
+    build_preprocessor,
     prepare_model_inputs,
     split_chronologically,
     transform_model_inputs,
@@ -178,6 +193,152 @@ def save_model_comparison(
     return destination
 
 
+def build_tuning_pipeline(model: BaseEstimator) -> Pipeline:
+    """Build a fold-safe preprocessing and estimator pipeline."""
+    return Pipeline(
+        steps=[
+            ("preprocessing", build_preprocessor()),
+            ("model", model),
+        ]
+    )
+
+
+def tune_model_with_time_series_cv(
+    model_name: str,
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    *,
+    n_iter: int = TUNING_N_ITER,
+) -> RandomizedSearchCV:
+    """Tune one model with expanding-window CV and fold-local preprocessing."""
+    model_registry = get_tuning_model_registry()
+    search_spaces = get_hyperparameter_search_spaces()
+
+    if model_name not in model_registry:
+        raise ValueError(f"Unknown tuning model: {model_name}")
+    if n_iter <= 0:
+        raise ValueError("n_iter must be positive.")
+
+    search = RandomizedSearchCV(
+        estimator=build_tuning_pipeline(model_registry[model_name]),
+        param_distributions=search_spaces[model_name],
+        n_iter=n_iter,
+        scoring=get_tuning_scoring(),
+        refit="rmse",
+        cv=build_time_series_split(),
+        random_state=RANDOM_STATE,
+        n_jobs=1,
+        return_train_score=False,
+        error_score="raise",
+    )
+    search.fit(X_train, y_train)
+    return search
+
+
+def _summarize_search_results(
+    model_name: str,
+    search: RandomizedSearchCV,
+) -> pd.DataFrame:
+    results = pd.DataFrame(search.cv_results_)
+    return pd.DataFrame(
+        {
+            "model": model_name,
+            "rank": results["rank_test_rmse"],
+            "parameters": results["params"].map(lambda params: json.dumps(params, sort_keys=True)),
+            "mean_cv_rmse": -results["mean_test_rmse"],
+            "std_cv_rmse": results["std_test_rmse"],
+            "mean_cv_mae": -results["mean_test_mae"],
+            "mean_cv_mape": -results["mean_test_mape"],
+            "mean_cv_r2": results["mean_test_r2"],
+        }
+    ).sort_values("rank")
+
+
+def tune_and_compare_models(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_validation: pd.DataFrame,
+    y_validation: pd.Series,
+    *,
+    model_names: tuple[str, ...] | None = None,
+    n_iter: int = TUNING_N_ITER,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Tune selected models and compare default and tuned validation metrics."""
+    model_registry = get_tuning_model_registry()
+    selected_names = model_names or tuple(model_registry)
+    unknown_names = sorted(set(selected_names) - set(model_registry))
+    if unknown_names:
+        raise ValueError(f"Unknown tuning models: {unknown_names}")
+
+    comparison_rows: list[dict[str, str | float]] = []
+    parameter_rows: list[dict[str, str | float]] = []
+    search_results: list[pd.DataFrame] = []
+
+    for model_name in selected_names:
+        default_pipeline = build_tuning_pipeline(model_registry[model_name])
+        default_pipeline.fit(X_train, y_train)
+        default_predictions = default_pipeline.predict(X_validation)
+        comparison_rows.append(
+            {
+                "model": model_name,
+                "configuration": "default",
+                **calculate_regression_metrics(y_validation, default_predictions),
+            }
+        )
+
+        search = tune_model_with_time_series_cv(
+            model_name,
+            X_train,
+            y_train,
+            n_iter=n_iter,
+        )
+        tuned_predictions = search.best_estimator_.predict(X_validation)
+        comparison_rows.append(
+            {
+                "model": model_name,
+                "configuration": "tuned",
+                **calculate_regression_metrics(y_validation, tuned_predictions),
+            }
+        )
+        parameter_rows.append(
+            {
+                "model": model_name,
+                "best_cv_rmse": -float(search.best_score_),
+                "best_parameters": json.dumps(search.best_params_, sort_keys=True),
+            }
+        )
+        search_results.append(_summarize_search_results(model_name, search))
+
+    comparison = pd.DataFrame(comparison_rows).sort_values(["configuration", "rmse"])
+    best_parameters = pd.DataFrame(parameter_rows).sort_values("best_cv_rmse")
+    tuning_results = pd.concat(search_results, ignore_index=True)
+    return comparison, best_parameters, tuning_results
+
+
+def save_model_tuning_results(
+    comparison: pd.DataFrame,
+    best_parameters: pd.DataFrame,
+    tuning_results: pd.DataFrame,
+    *,
+    comparison_path: str | Path = TUNING_COMPARISON_PATH,
+    best_params_path: str | Path = TUNING_BEST_PARAMS_PATH,
+    tuning_results_path: str | Path = TUNING_RESULTS_PATH,
+) -> tuple[Path, Path, Path]:
+    """Save validation comparison, best parameters, and CV search results."""
+    destinations = (
+        Path(comparison_path),
+        Path(best_params_path),
+        Path(tuning_results_path),
+    )
+    for destination in destinations:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+
+    comparison.to_csv(destinations[0], index=False)
+    best_parameters.to_csv(destinations[1], index=False)
+    tuning_results.to_csv(destinations[2], index=False)
+    return destinations
+
+
 def run_baseline_pipeline(
     *,
     include_test_metrics: bool = False,
@@ -263,6 +424,38 @@ def run_core_ensemble_pipeline(
     save_ensemble_metrics(ensemble_metrics, ensemble_metrics_path)
     save_model_comparison(comparison, comparison_path)
     return ensemble_metrics, comparison
+
+
+def run_model_tuning_pipeline(
+    *,
+    model_names: tuple[str, ...] | None = None,
+    n_iter: int = TUNING_N_ITER,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Tune models on train folds and compare them on validation only."""
+    feature_data = build_feature_dataset(load_raw_data())
+    train_data, validation_data, test_data = split_chronologically(feature_data)
+    (
+        X_train,
+        X_validation,
+        _,
+        y_train,
+        y_validation,
+        _,
+        _,
+        _,
+        _,
+    ) = prepare_model_inputs(train_data, validation_data, test_data)
+
+    comparison, best_parameters, tuning_results = tune_and_compare_models(
+        X_train,
+        y_train,
+        X_validation,
+        y_validation,
+        model_names=model_names,
+        n_iter=n_iter,
+    )
+    save_model_tuning_results(comparison, best_parameters, tuning_results)
+    return comparison, best_parameters, tuning_results
 
 
 def run_pipeline() -> None:

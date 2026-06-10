@@ -40,5 +40,12 @@ BASELINE_METRICS_PATH = METRICS_DIR / "baseline_model_metrics.csv"
 ENSEMBLE_METRICS_PATH = METRICS_DIR / "core_ensemble_model_metrics.csv"
 MODEL_COMPARISON_PATH = METRICS_DIR / "baseline_ensemble_comparison.csv"
 
+# Time-series tuning configuration and outputs
+TIME_SERIES_CV_SPLITS = 3
+TUNING_N_ITER = 3
+TUNING_BEST_PARAMS_PATH = METRICS_DIR / "tuning_best_parameters.csv"
+TUNING_RESULTS_PATH = METRICS_DIR / "time_series_tuning_results.csv"
+TUNING_COMPARISON_PATH = METRICS_DIR / "default_tuned_model_comparison.csv"
+
 # Reproducibility
 RANDOM_STATE = 42
