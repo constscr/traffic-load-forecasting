@@ -37,6 +37,8 @@ TEST_SIZE = 0.20
 
 # Baseline evaluation outputs
 BASELINE_METRICS_PATH = METRICS_DIR / "baseline_model_metrics.csv"
+ENSEMBLE_METRICS_PATH = METRICS_DIR / "core_ensemble_model_metrics.csv"
+MODEL_COMPARISON_PATH = METRICS_DIR / "baseline_ensemble_comparison.csv"
 
 # Reproducibility
 RANDOM_STATE = 42
