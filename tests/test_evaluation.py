@@ -2,8 +2,11 @@ import numpy as np
 import pytest
 
 from traffic_forecasting.evaluation import (
+    build_time_series_split,
     calculate_regression_metrics,
+    get_tuning_scoring,
     mean_absolute_percentage_error,
+    summarize_time_series_splits,
 )
 
 
@@ -43,3 +46,28 @@ def test_mean_absolute_percentage_error_rejects_mismatched_shapes() -> None:
             y_true=[1.0, 2.0],
             y_pred=[1.0],
         )
+
+
+def test_time_series_split_uses_expanding_ordered_windows() -> None:
+    splitter = build_time_series_split(n_splits=3)
+    summary = summarize_time_series_splits(n_samples=20, splitter=splitter)
+
+    assert summary["train_size"].tolist() == [5, 10, 15]
+    assert summary["validation_size"].tolist() == [5, 5, 5]
+    assert (summary["train_end"] < summary["validation_start"]).all()
+    assert summary["train_start"].eq(0).all()
+
+
+def test_tuning_scoring_uses_rmse_and_supporting_metrics() -> None:
+    scoring = get_tuning_scoring()
+
+    assert set(scoring) == {"rmse", "mae", "mape", "r2"}
+    assert scoring["rmse"] == "neg_root_mean_squared_error"
+
+
+def test_time_series_split_rejects_invalid_arguments() -> None:
+    with pytest.raises(ValueError, match="at least two"):
+        build_time_series_split(n_splits=1)
+
+    with pytest.raises(ValueError, match="positive"):
+        summarize_time_series_splits(n_samples=0)
