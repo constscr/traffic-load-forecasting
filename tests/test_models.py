@@ -1,19 +1,29 @@
-from sklearn.base import RegressorMixin
+from catboost import CatBoostRegressor
+from lightgbm import LGBMRegressor
+from sklearn.base import RegressorMixin, is_regressor
 from sklearn.dummy import DummyRegressor
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.svm import SVR
 from sklearn.tree import DecisionTreeRegressor
+from xgboost import XGBRegressor
 
 from traffic_forecasting.config import RANDOM_STATE
 from traffic_forecasting.models import (
+    build_catboost_regressor,
     build_decision_tree_regressor,
     build_dummy_regressor,
+    build_gradient_boosting_regressor,
     build_knn_regressor,
+    build_lgbm_regressor,
     build_linear_regression,
+    build_random_forest_regressor,
     build_ridge_regressor,
     build_svr_regressor,
+    build_xgb_regressor,
     get_baseline_model_registry,
+    get_core_ensemble_model_registry,
 )
 
 
@@ -45,4 +55,42 @@ def test_baseline_model_registry_returns_fresh_estimators() -> None:
     first_registry = get_baseline_model_registry()
     second_registry = get_baseline_model_registry()
 
+    assert all(first_registry[name] is not second_registry[name] for name in first_registry)
+
+
+def test_core_ensemble_constructors_return_reproducible_estimators() -> None:
+    random_forest = build_random_forest_regressor()
+    gradient_boosting = build_gradient_boosting_regressor()
+    xgboost = build_xgb_regressor()
+    lightgbm = build_lgbm_regressor()
+    catboost = build_catboost_regressor()
+
+    assert isinstance(random_forest, RandomForestRegressor)
+    assert isinstance(gradient_boosting, GradientBoostingRegressor)
+    assert isinstance(xgboost, XGBRegressor)
+    assert isinstance(lightgbm, LGBMRegressor)
+    assert isinstance(catboost, CatBoostRegressor)
+
+    assert random_forest.random_state == RANDOM_STATE
+    assert gradient_boosting.random_state == RANDOM_STATE
+    assert xgboost.random_state == RANDOM_STATE
+    assert lightgbm.random_state == RANDOM_STATE
+    assert catboost.get_param("random_seed") == RANDOM_STATE
+    assert catboost.get_param("allow_writing_files") is False
+
+
+def test_core_ensemble_registry_is_separate_and_returns_fresh_estimators() -> None:
+    baseline_registry = get_baseline_model_registry()
+    first_registry = get_core_ensemble_model_registry()
+    second_registry = get_core_ensemble_model_registry()
+
+    assert tuple(first_registry) == (
+        "random_forest",
+        "gradient_boosting",
+        "xgboost",
+        "lightgbm",
+        "catboost",
+    )
+    assert set(baseline_registry).isdisjoint(first_registry)
+    assert all(is_regressor(model) for model in first_registry.values())
     assert all(first_registry[name] is not second_registry[name] for name in first_registry)

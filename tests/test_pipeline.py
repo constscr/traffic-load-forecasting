@@ -1,12 +1,15 @@
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.utils.validation import check_is_fitted
 
-from traffic_forecasting.config import DATETIME_COLUMN, TARGET_COLUMN
+from traffic_forecasting.config import DATETIME_COLUMN, RANDOM_STATE, TARGET_COLUMN
 from traffic_forecasting.pipeline import (
+    build_model_comparison,
     save_baseline_metrics,
     train_and_evaluate_baselines,
+    train_and_evaluate_ensembles,
 )
 from traffic_forecasting.preprocessing import (
     get_model_feature_groups,
@@ -129,3 +132,91 @@ def test_save_baseline_metrics_writes_csv(tmp_path) -> None:
 
     assert saved_path == output_path
     pd.testing.assert_frame_equal(pd.read_csv(saved_path), metrics)
+
+
+def test_train_and_evaluate_ensembles_supports_all_core_models() -> None:
+    X_train, X_validation, X_test, y_train, y_validation, y_test = _prepare_inputs()
+
+    metrics, fitted_models, preprocessor = train_and_evaluate_ensembles(
+        X_train,
+        X_validation,
+        X_test,
+        y_train,
+        y_validation,
+        y_test,
+    )
+
+    assert tuple(fitted_models) == (
+        "random_forest",
+        "gradient_boosting",
+        "xgboost",
+        "lightgbm",
+        "catboost",
+    )
+    assert len(metrics) == len(fitted_models)
+    assert set(metrics["split"]) == {"validation"}
+    assert metrics["used_for_model_comparison"].all()
+    assert np.isfinite(metrics[["mae", "rmse", "mape", "r2"]].to_numpy()).all()
+
+    check_is_fitted(preprocessor)
+    for model in fitted_models.values():
+        check_is_fitted(model)
+
+
+def test_ensemble_test_metrics_require_explicit_opt_in(monkeypatch) -> None:
+    X_train, X_validation, X_test, y_train, y_validation, y_test = _prepare_inputs()
+    monkeypatch.setattr(
+        "traffic_forecasting.pipeline.get_core_ensemble_model_registry",
+        lambda: {
+            "gradient_boosting": GradientBoostingRegressor(
+                n_estimators=5,
+                random_state=RANDOM_STATE,
+            )
+        },
+    )
+
+    metrics, _, _ = train_and_evaluate_ensembles(
+        X_train,
+        X_validation,
+        X_test,
+        y_train,
+        y_validation,
+        y_test,
+        include_test_metrics=True,
+    )
+
+    assert set(metrics["split"]) == {"validation", "test"}
+    assert not metrics.loc[
+        metrics["split"] == "test",
+        "used_for_model_comparison",
+    ].any()
+
+
+def test_build_model_comparison_labels_groups_and_ranks_by_rmse() -> None:
+    baseline_metrics = pd.DataFrame(
+        {
+            "model": ["decision_tree"],
+            "split": ["validation"],
+            "used_for_model_comparison": [True],
+            "mae": [230.0],
+            "rmse": [370.0],
+            "mape": [9.6],
+            "r2": [0.96],
+        }
+    )
+    ensemble_metrics = pd.DataFrame(
+        {
+            "model": ["random_forest"],
+            "split": ["validation"],
+            "used_for_model_comparison": [True],
+            "mae": [200.0],
+            "rmse": [320.0],
+            "mape": [8.0],
+            "r2": [0.97],
+        }
+    )
+
+    comparison = build_model_comparison(baseline_metrics, ensemble_metrics)
+
+    assert comparison["model"].tolist() == ["random_forest", "decision_tree"]
+    assert comparison["model_group"].tolist() == ["core_ensemble", "baseline"]
