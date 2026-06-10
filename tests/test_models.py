@@ -24,6 +24,8 @@ from traffic_forecasting.models import (
     build_xgb_regressor,
     get_baseline_model_registry,
     get_core_ensemble_model_registry,
+    get_hyperparameter_search_spaces,
+    get_tuning_model_registry,
 )
 
 
@@ -94,3 +96,25 @@ def test_core_ensemble_registry_is_separate_and_returns_fresh_estimators() -> No
     assert set(baseline_registry).isdisjoint(first_registry)
     assert all(is_regressor(model) for model in first_registry.values())
     assert all(first_registry[name] is not second_registry[name] for name in first_registry)
+
+
+def test_tuning_registry_and_search_spaces_cover_primary_models() -> None:
+    registry = get_tuning_model_registry()
+    search_spaces = get_hyperparameter_search_spaces()
+
+    assert tuple(registry) == (
+        "ridge",
+        "decision_tree",
+        "random_forest",
+        "gradient_boosting",
+        "xgboost",
+        "lightgbm",
+        "catboost",
+    )
+    assert set(search_spaces) == set(registry)
+    assert all(search_space for search_space in search_spaces.values())
+    assert all(
+        parameter.startswith("model__")
+        for search_space in search_spaces.values()
+        for parameter in search_space
+    )
