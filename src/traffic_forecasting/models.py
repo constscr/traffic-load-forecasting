@@ -104,3 +104,61 @@ def get_core_ensemble_model_registry() -> dict[str, RegressorMixin]:
         "lightgbm": build_lgbm_regressor(),
         "catboost": build_catboost_regressor(),
     }
+
+
+def get_tuning_model_registry() -> dict[str, RegressorMixin]:
+    """Return the primary models selected for time-series tuning."""
+    return {
+        "ridge": build_ridge_regressor(),
+        "decision_tree": build_decision_tree_regressor(),
+        "random_forest": build_random_forest_regressor(),
+        "gradient_boosting": build_gradient_boosting_regressor(),
+        "xgboost": build_xgb_regressor(),
+        "lightgbm": build_lgbm_regressor(),
+        "catboost": build_catboost_regressor(),
+    }
+
+
+def get_hyperparameter_search_spaces() -> dict[str, dict[str, list[object]]]:
+    """Return compact search spaces using sklearn Pipeline parameter names."""
+    return {
+        "ridge": {
+            "model__alpha": [0.1, 1.0, 10.0, 100.0],
+        },
+        "decision_tree": {
+            "model__max_depth": [8, 12, 16, None],
+            "model__min_samples_split": [2, 10, 20],
+            "model__min_samples_leaf": [1, 5, 10],
+        },
+        "random_forest": {
+            "model__n_estimators": [100, 200],
+            "model__max_depth": [12, 20, None],
+            "model__min_samples_leaf": [1, 3, 5],
+            "model__max_features": ["sqrt", 0.8, 1.0],
+        },
+        "gradient_boosting": {
+            "model__n_estimators": [100, 200],
+            "model__learning_rate": [0.03, 0.05, 0.1],
+            "model__max_depth": [2, 3, 4],
+            "model__subsample": [0.8, 1.0],
+        },
+        "xgboost": {
+            "model__n_estimators": [100, 200],
+            "model__learning_rate": [0.03, 0.05, 0.1],
+            "model__max_depth": [3, 6, 9],
+            "model__subsample": [0.8, 1.0],
+            "model__colsample_bytree": [0.8, 1.0],
+        },
+        "lightgbm": {
+            "model__n_estimators": [100, 200],
+            "model__learning_rate": [0.03, 0.05, 0.1],
+            "model__num_leaves": [15, 31, 63],
+            "model__max_depth": [-1, 10, 20],
+        },
+        "catboost": {
+            "model__iterations": [100, 200, 300],
+            "model__learning_rate": [0.03, 0.05, 0.1],
+            "model__depth": [4, 6, 8],
+            "model__l2_leaf_reg": [3.0, 5.0, 10.0],
+        },
+    }
