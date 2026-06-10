@@ -93,3 +93,14 @@ def get_baseline_model_registry() -> dict[str, RegressorMixin]:
         "knn": build_knn_regressor(),
         "svr": build_svr_regressor(),
     }
+
+
+def get_core_ensemble_model_registry() -> dict[str, RegressorMixin]:
+    """Return fresh core ensemble model instances in comparison order."""
+    return {
+        "random_forest": build_random_forest_regressor(),
+        "gradient_boosting": build_gradient_boosting_regressor(),
+        "xgboost": build_xgb_regressor(),
+        "lightgbm": build_lgbm_regressor(),
+        "catboost": build_catboost_regressor(),
+    }
