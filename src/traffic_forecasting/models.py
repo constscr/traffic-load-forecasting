@@ -106,6 +106,17 @@ def get_core_ensemble_model_registry() -> dict[str, RegressorMixin]:
     }
 
 
+def get_experiment_model_registry() -> dict[str, RegressorMixin]:
+    """Return all completed baseline and core ensemble models."""
+    baseline_models = get_baseline_model_registry()
+    ensemble_models = get_core_ensemble_model_registry()
+    overlapping_names = sorted(set(baseline_models) & set(ensemble_models))
+    if overlapping_names:
+        raise ValueError(f"Model registry names must be unique: {overlapping_names}")
+
+    return {**baseline_models, **ensemble_models}
+
+
 def get_tuning_model_registry() -> dict[str, RegressorMixin]:
     """Return the primary models selected for time-series tuning."""
     return {
