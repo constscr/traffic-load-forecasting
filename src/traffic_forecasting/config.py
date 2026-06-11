@@ -10,11 +10,16 @@ PROCESSED_DATA_DIR = DATA_DIR / "processed"
 
 REPORTS_DIR = PROJECT_ROOT / "reports"
 METRICS_DIR = REPORTS_DIR / "metrics"
+TABLES_DIR = REPORTS_DIR / "tables"
 ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+MODELS_DIR = ARTIFACTS_DIR / "models"
+PREDICTIONS_DIR = ARTIFACTS_DIR / "predictions"
 
 # Raw dataset configuration
 RAW_DATA_FILENAME = "metro_interstate_traffic_volume.csv"
 RAW_DATA_PATH = RAW_DATA_DIR / RAW_DATA_FILENAME
+INTERIM_DATA_PATH = INTERIM_DATA_DIR / "metro_traffic_hourly.csv"
+PROCESSED_DATA_PATH = PROCESSED_DATA_DIR / "metro_traffic_features.csv"
 
 # Dataset schema
 DATETIME_COLUMN = "date_time"
@@ -46,6 +51,15 @@ TUNING_N_ITER = 3
 TUNING_BEST_PARAMS_PATH = METRICS_DIR / "tuning_best_parameters.csv"
 TUNING_RESULTS_PATH = METRICS_DIR / "time_series_tuning_results.csv"
 TUNING_COMPARISON_PATH = METRICS_DIR / "default_tuned_model_comparison.csv"
+
+# End-to-end experiment outputs
+EXPERIMENT_METRICS_PATH = METRICS_DIR / "experiment_model_metrics.csv"
+EXPERIMENT_COMPARISON_PATH = TABLES_DIR / "experiment_model_comparison.csv"
+VALIDATION_PREDICTIONS_PATH = PREDICTIONS_DIR / "validation_predictions.csv"
+TEST_PREDICTIONS_PATH = PREDICTIONS_DIR / "test_predictions.csv"
+
+# Persist only the model selected by validation results from the completed model stages
+PERSISTED_EXPERIMENT_MODELS = ("catboost",)
 
 # Reproducibility
 RANDOM_STATE = 42
