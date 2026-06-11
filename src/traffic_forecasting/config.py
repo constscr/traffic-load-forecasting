@@ -11,6 +11,7 @@ PROCESSED_DATA_DIR = DATA_DIR / "processed"
 REPORTS_DIR = PROJECT_ROOT / "reports"
 METRICS_DIR = REPORTS_DIR / "metrics"
 TABLES_DIR = REPORTS_DIR / "tables"
+FIGURES_DIR = REPORTS_DIR / "figures"
 ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
 MODELS_DIR = ARTIFACTS_DIR / "models"
 PREDICTIONS_DIR = ARTIFACTS_DIR / "predictions"
@@ -57,6 +58,15 @@ EXPERIMENT_METRICS_PATH = METRICS_DIR / "experiment_model_metrics.csv"
 EXPERIMENT_COMPARISON_PATH = TABLES_DIR / "experiment_model_comparison.csv"
 VALIDATION_PREDICTIONS_PATH = PREDICTIONS_DIR / "validation_predictions.csv"
 TEST_PREDICTIONS_PATH = PREDICTIONS_DIR / "test_predictions.csv"
+
+# Model result visualization outputs
+TRAFFIC_VOLUME_TIME_SERIES_FIGURE_PATH = FIGURES_DIR / "model_result_traffic_time_series.png"
+ACTUAL_VS_PREDICTED_FIGURE_PATH = FIGURES_DIR / "actual_vs_predicted_validation.png"
+RESIDUAL_DISTRIBUTION_FIGURE_PATH = FIGURES_DIR / "validation_residual_distribution.png"
+TRUE_VS_PREDICTED_FIGURE_PATH = FIGURES_DIR / "validation_true_vs_predicted.png"
+ERROR_BY_HOUR_FIGURE_PATH = FIGURES_DIR / "validation_error_by_hour.png"
+MODEL_COMPARISON_FIGURE_PATH = FIGURES_DIR / "validation_model_comparison.png"
+FEATURE_IMPORTANCE_FIGURE_PATH = FIGURES_DIR / "catboost_feature_importance.png"
 
 # Persist only the model selected by validation results from the completed model stages
 PERSISTED_EXPERIMENT_MODELS = ("catboost",)
