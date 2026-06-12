@@ -9,6 +9,7 @@ from matplotlib.figure import Figure
 from sklearn.pipeline import Pipeline
 
 from traffic_forecasting.config import DATETIME_COLUMN, TARGET_COLUMN
+from traffic_forecasting.feature_sets import get_feature_set_scenarios
 
 ACTUAL_COLUMN = f"actual_{TARGET_COLUMN}"
 PREDICTED_COLUMN = f"predicted_{TARGET_COLUMN}"
@@ -394,6 +395,61 @@ def plot_feature_importance(
         ylabel="Transformed feature",
     )
     axis.grid(axis="x", alpha=GRID_ALPHA)
+    figure.tight_layout()
+    _save_figure(figure, output_path)
+    return figure, axis
+
+
+def plot_feature_set_comparison(
+    comparison: pd.DataFrame,
+    *,
+    metric: str = "rmse",
+    split: str = "validation",
+    output_path: str | Path | None = None,
+) -> tuple[Figure, Axes]:
+    """Compare feature scenarios across selected models on validation metrics."""
+    required_columns = {"feature_set_label", "model", "split", metric}
+    missing_columns = sorted(required_columns - set(comparison.columns))
+    if missing_columns:
+        raise ValueError(f"Missing feature set comparison columns: {missing_columns}")
+
+    selected = comparison.loc[comparison["split"] == split].copy()
+    if selected.empty:
+        raise ValueError(f"No feature set comparison rows found for split: {split}")
+
+    scenario_order = [
+        scenario.label
+        for scenario in get_feature_set_scenarios().values()
+        if scenario.label in set(selected["feature_set_label"])
+    ]
+
+    default_model_order = ("catboost", "xgboost", "random_forest")
+    available_models = set(selected["model"])
+
+    model_order = [model for model in default_model_order if model in available_models]
+    model_order.extend(sorted(available_models - set(default_model_order)))
+
+    figure, axis = plt.subplots(figsize=(14, 7))
+    sns.barplot(
+        data=selected,
+        x="feature_set_label",
+        y=metric,
+        hue="model",
+        order=scenario_order,
+        hue_order=model_order,
+        ax=axis,
+        palette=(PASTEL_BLUE, PASTEL_PEACH, PASTEL_LAVENDER),
+        edgecolor="white",
+        linewidth=0.6,
+    )
+    axis.set(
+        title=f"Feature Set Comparison by {metric.upper()} ({split.title()})",
+        xlabel="Feature set scenario",
+        ylabel=metric.upper(),
+    )
+    axis.tick_params(axis="x", rotation=20)
+    axis.grid(axis="y", alpha=GRID_ALPHA)
+    axis.legend(title="Model")
     figure.tight_layout()
     _save_figure(figure, output_path)
     return figure, axis
