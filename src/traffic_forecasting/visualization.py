@@ -6,6 +6,7 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.patches import Patch
 from sklearn.pipeline import Pipeline
 
 from traffic_forecasting.config import DATETIME_COLUMN, TARGET_COLUMN
@@ -451,6 +452,66 @@ def plot_feature_set_comparison(
     axis.tick_params(axis="x", rotation=20)
     axis.grid(axis="y", alpha=GRID_ALPHA)
     axis.legend(title="Model")
+    figure.tight_layout()
+    _save_figure(figure, output_path)
+    return figure, axis
+
+
+def plot_extended_ensemble_comparison(
+    comparison: pd.DataFrame,
+    *,
+    metric: str = "rmse",
+    split: str = "validation",
+    output_path: str | Path | None = None,
+) -> tuple[Figure, Axes]:
+    """Compare voting with the strongest individual validation models."""
+    required_columns = {"model", "model_group", "split", metric}
+    missing_columns = sorted(required_columns - set(comparison.columns))
+    if missing_columns:
+        raise ValueError(f"Missing extended ensemble comparison columns: {missing_columns}")
+
+    selected = comparison.loc[comparison["split"] == split].copy()
+    if selected.empty:
+        raise ValueError(f"No extended ensemble rows found for split: {split}")
+    selected = selected.sort_values(metric, ascending=False)
+    colors = [
+        (
+            MODEL_COMPARISON_HIGHLIGHT_COLOR
+            if group == "extended_ensemble"
+            else MODEL_COMPARISON_BASE_COLOR
+        )
+        for group in selected["model_group"]
+    ]
+
+    figure, axis = plt.subplots(figsize=(10, 6))
+    axis.barh(
+        selected["model"],
+        selected[metric],
+        color=colors,
+        edgecolor="white",
+        linewidth=0.6,
+    )
+    axis.set(
+        title=f"Extended Ensemble Comparison by {metric.upper()} ({split.title()})",
+        xlabel=metric.upper(),
+        ylabel="Model",
+    )
+    axis.grid(axis="x", alpha=GRID_ALPHA)
+    axis.legend(
+        handles=[
+            Patch(
+                facecolor=MODEL_COMPARISON_BASE_COLOR,
+                edgecolor="white",
+                label="Strongest individual",
+            ),
+            Patch(
+                facecolor=MODEL_COMPARISON_HIGHLIGHT_COLOR,
+                edgecolor="white",
+                label="Extended ensemble",
+            ),
+        ],
+        title="Model group",
+    )
     figure.tight_layout()
     _save_figure(figure, output_path)
     return figure, axis
