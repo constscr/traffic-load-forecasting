@@ -439,6 +439,7 @@ def plot_feature_set_comparison(
         hue_order=model_order,
         ax=axis,
         palette=(PASTEL_BLUE, PASTEL_PEACH, PASTEL_LAVENDER),
+        saturation=1.0,
         edgecolor="white",
         linewidth=0.6,
     )
