@@ -74,6 +74,14 @@ FEATURE_SET_COMPARISON_PATH = TABLES_DIR / "feature_set_comparison.csv"
 FEATURE_SET_PREDICTIONS_PATH = PREDICTIONS_DIR / "feature_set_validation_predictions.csv"
 FEATURE_SET_COMPARISON_FIGURE_PATH = FIGURES_DIR / "feature_set_comparison.png"
 
+# Extended ensemble experiment outputs
+EXTENDED_ENSEMBLE_METRICS_PATH = METRICS_DIR / "extended_ensemble_metrics.csv"
+EXTENDED_ENSEMBLE_COMPARISON_PATH = TABLES_DIR / "extended_ensemble_comparison.csv"
+EXTENDED_ENSEMBLE_PREDICTIONS_PATH = (
+    PREDICTIONS_DIR / "extended_ensemble_validation_predictions.csv"
+)
+EXTENDED_ENSEMBLE_FIGURE_PATH = FIGURES_DIR / "extended_ensemble_comparison.png"
+
 # Persist only the model selected by validation results from the completed model stages
 PERSISTED_EXPERIMENT_MODELS = ("catboost",)
 
