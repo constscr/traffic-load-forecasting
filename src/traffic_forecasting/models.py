@@ -117,6 +117,15 @@ def get_experiment_model_registry() -> dict[str, RegressorMixin]:
     return {**baseline_models, **ensemble_models}
 
 
+def get_feature_set_model_registry() -> dict[str, RegressorMixin]:
+    """Return the primary and robustness models for feature set experiments."""
+    return {
+        "catboost": build_catboost_regressor(),
+        "xgboost": build_xgb_regressor(),
+        "random_forest": build_random_forest_regressor(),
+    }
+
+
 def get_tuning_model_registry() -> dict[str, RegressorMixin]:
     """Return the primary models selected for time-series tuning."""
     return {
