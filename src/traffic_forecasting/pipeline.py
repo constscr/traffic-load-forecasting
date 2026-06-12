@@ -21,7 +21,15 @@ from traffic_forecasting.config import (
     FEATURE_SET_METRICS_PATH,
     FEATURE_SET_PREDICTIONS_PATH,
     INTERIM_DATA_PATH,
+    LOCKED_TEST_COMPARISON_PATH,
+    LOCKED_TEST_METRICS_PATH,
+    LOCKED_TEST_PREDICTIONS_PATH,
     MODEL_COMPARISON_PATH,
+    MODEL_EVALUATION_CANDIDATES,
+    MODEL_EVALUATION_ERROR_BY_HOUR_PATH,
+    MODEL_EVALUATION_FEATURE_IMPORTANCE_PATH,
+    MODEL_EVALUATION_LARGE_ERRORS_PATH,
+    MODEL_EVALUATION_RESIDUAL_SUMMARY_PATH,
     MODELS_DIR,
     PERSISTED_EXPERIMENT_MODELS,
     PROCESSED_DATA_PATH,
@@ -38,7 +46,11 @@ from traffic_forecasting.data_loader import load_raw_data
 from traffic_forecasting.evaluation import (
     build_time_series_split,
     calculate_regression_metrics,
+    extract_feature_importance,
     get_tuning_scoring,
+    identify_large_errors,
+    summarize_errors_by_hour,
+    summarize_residuals,
 )
 from traffic_forecasting.feature_sets import (
     get_feature_set_columns,
@@ -69,6 +81,12 @@ EXTENDED_ENSEMBLE_FEATURE_SETS = {
     "xgboost": "full",
     "random_forest": "temporal_calendar_lag",
 }
+
+MODEL_EVALUATION_FEATURE_IMPORTANCE_CANDIDATES = (
+    "catboost",
+    "xgboost",
+    "random_forest",
+)
 
 
 def _fit_and_evaluate_model_registry(
@@ -1143,6 +1161,267 @@ def run_extended_ensemble_pipeline(
         predictions_path=predictions_path,
     )
     return metrics, comparison, predictions, output_paths
+
+
+def build_model_evaluation_candidates(
+    *,
+    candidate_names: tuple[str, ...] = MODEL_EVALUATION_CANDIDATES,
+    base_models: dict[str, RegressorMixin] | None = None,
+    base_feature_sets: dict[str, str] | None = None,
+) -> dict[str, RegressorMixin]:
+    """Build candidates fixed by completed validation experiments."""
+    if not candidate_names:
+        raise ValueError("At least one model evaluation candidate is required.")
+
+    available_candidates = build_extended_ensemble_candidates(
+        base_models=base_models,
+        base_feature_sets=base_feature_sets,
+    )
+    unknown_names = sorted(set(candidate_names) - set(available_candidates))
+    if unknown_names:
+        raise ValueError(f"Unknown model evaluation candidates: {unknown_names}")
+    return {model_name: available_candidates[model_name] for model_name in candidate_names}
+
+
+def train_and_evaluate_locked_test_candidates(
+    development_data: pd.DataFrame,
+    test_data: pd.DataFrame,
+    *,
+    candidate_names: tuple[str, ...] = MODEL_EVALUATION_CANDIDATES,
+    base_models: dict[str, RegressorMixin] | None = None,
+    base_feature_sets: dict[str, str] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, RegressorMixin]]:
+    """
+    Fit validation-selected candidates on train + validation and evaluate locked test data once.
+    """
+    required_columns = {DATETIME_COLUMN, TARGET_COLUMN}
+    for split_name, data in {"development": development_data, "test": test_data}.items():
+        missing_columns = sorted(required_columns - set(data.columns))
+        if missing_columns:
+            raise ValueError(f"Missing required columns in {split_name} data: {missing_columns}")
+
+    candidates = build_model_evaluation_candidates(
+        candidate_names=candidate_names,
+        base_models=base_models,
+        base_feature_sets=base_feature_sets,
+    )
+    feature_sets = (
+        EXTENDED_ENSEMBLE_FEATURE_SETS if base_feature_sets is None else base_feature_sets
+    )
+    voting_strategy = (
+        next(iter(feature_sets.values()))
+        if len(set(feature_sets.values())) == 1
+        else "mixed_best_feature_sets"
+    )
+
+    X_development = select_model_features(development_data)
+    X_test = select_model_features(test_data)
+    y_development = development_data[TARGET_COLUMN].copy()
+    y_test = test_data[TARGET_COLUMN].copy()
+    test_timestamps = test_data[DATETIME_COLUMN].reset_index(drop=True)
+    test_actual = y_test.reset_index(drop=True)
+
+    metric_rows: list[dict[str, str | bool | float]] = []
+    prediction_frames: list[pd.DataFrame] = []
+    fitted_candidates: dict[str, RegressorMixin] = {}
+
+    for model_name, model in candidates.items():
+        model_group = (
+            "extended_ensemble" if model_name == "voting_regressor" else "strongest_individual"
+        )
+        feature_set_strategy = (
+            voting_strategy if model_name == "voting_regressor" else feature_sets[model_name]
+        )
+
+        model.fit(X_development, y_development)
+        test_predictions = model.predict(X_test)
+        fitted_candidates[model_name] = model
+        metric_rows.append(
+            {
+                "model": model_name,
+                "model_group": model_group,
+                "feature_set_strategy": feature_set_strategy,
+                "selection_basis": "completed_validation_experiments",
+                "training_data_scope": "train_validation",
+                "split": "test",
+                "used_for_model_selection": False,
+                **calculate_regression_metrics(y_test, test_predictions),
+            }
+        )
+        prediction_frames.append(
+            pd.DataFrame(
+                {
+                    "model": model_name,
+                    "model_group": model_group,
+                    "feature_set_strategy": feature_set_strategy,
+                    "selection_basis": "completed_validation_experiments",
+                    "training_data_scope": "train_validation",
+                    "split": "test",
+                    DATETIME_COLUMN: test_timestamps,
+                    f"actual_{TARGET_COLUMN}": test_actual,
+                    f"predicted_{TARGET_COLUMN}": test_predictions,
+                }
+            )
+        )
+
+    metrics = pd.DataFrame(metric_rows).reset_index(drop=True)
+    predictions = pd.concat(prediction_frames, ignore_index=True)
+    return metrics, predictions, fitted_candidates
+
+
+def build_locked_test_comparison(metrics: pd.DataFrame) -> pd.DataFrame:
+    """Describe locked test results without ranking or selecting candidates."""
+    required_columns = {
+        "model",
+        "model_group",
+        "selection_basis",
+        "split",
+        "used_for_model_selection",
+        "rmse",
+    }
+    missing_columns = sorted(required_columns - set(metrics.columns))
+    if missing_columns:
+        raise ValueError(f"Missing locked test metric columns: {missing_columns}")
+
+    test_metrics = metrics.loc[metrics["split"] == "test"].copy()
+    if test_metrics.empty:
+        raise ValueError("Locked test comparison requires test metrics.")
+    if test_metrics["used_for_model_selection"].any():
+        raise ValueError("Locked test metrics cannot be used for model selection.")
+
+    selection_order = {
+        model_name: order for order, model_name in enumerate(MODEL_EVALUATION_CANDIDATES, start=1)
+    }
+    test_metrics.insert(
+        0,
+        "predefined_candidate_order",
+        test_metrics["model"].map(selection_order),
+    )
+    return test_metrics.sort_values("predefined_candidate_order").reset_index(drop=True)
+
+
+def extract_model_evaluation_feature_importance(
+    fitted_candidates: dict[str, RegressorMixin],
+    *,
+    candidate_names: tuple[str, ...] = MODEL_EVALUATION_FEATURE_IMPORTANCE_CANDIDATES,
+) -> pd.DataFrame:
+    """Extract feature importance only for supported fitted model candidates."""
+    importance_frames: list[pd.DataFrame] = []
+
+    for model_name in candidate_names:
+        model_pipeline = fitted_candidates.get(model_name)
+        if model_pipeline is None:
+            continue
+
+        try:
+            importance = extract_feature_importance(model_pipeline).copy()
+        except ValueError:
+            continue
+
+        importance.insert(0, "model", model_name)
+        importance_frames.append(importance)
+
+    if not importance_frames:
+        return pd.DataFrame(columns=["model", "feature", "importance"])
+
+    return pd.concat(importance_frames, ignore_index=True)
+
+
+def save_model_evaluation_results(
+    metrics: pd.DataFrame,
+    comparison: pd.DataFrame,
+    predictions: pd.DataFrame,
+    residual_summary: pd.DataFrame,
+    hourly_errors: pd.DataFrame,
+    large_errors: pd.DataFrame,
+    feature_importance: pd.DataFrame,
+    *,
+    metrics_path: str | Path = LOCKED_TEST_METRICS_PATH,
+    comparison_path: str | Path = LOCKED_TEST_COMPARISON_PATH,
+    predictions_path: str | Path = LOCKED_TEST_PREDICTIONS_PATH,
+    residual_summary_path: str | Path = MODEL_EVALUATION_RESIDUAL_SUMMARY_PATH,
+    hourly_errors_path: str | Path = MODEL_EVALUATION_ERROR_BY_HOUR_PATH,
+    large_errors_path: str | Path = MODEL_EVALUATION_LARGE_ERRORS_PATH,
+    feature_importance_path: str | Path = MODEL_EVALUATION_FEATURE_IMPORTANCE_PATH,
+) -> dict[str, Path]:
+    """Save locked test metrics, predictions, error analyses, and valid feature importance."""
+    outputs = {
+        "test_metrics": (metrics, Path(metrics_path)),
+        "test_comparison": (comparison, Path(comparison_path)),
+        "test_predictions": (predictions, Path(predictions_path)),
+        "residual_summary": (residual_summary, Path(residual_summary_path)),
+        "error_by_hour": (hourly_errors, Path(hourly_errors_path)),
+        "large_errors": (large_errors, Path(large_errors_path)),
+        "feature_importance": (
+            feature_importance,
+            Path(feature_importance_path),
+        ),
+    }
+    for data, destination in outputs.values():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        data.to_csv(destination, index=False)
+    return {name: destination for name, (_, destination) in outputs.items()}
+
+
+def run_model_evaluation_pipeline(
+    *,
+    feature_data_path: str | Path = PROCESSED_DATA_PATH,
+    candidate_names: tuple[str, ...] = MODEL_EVALUATION_CANDIDATES,
+    base_models: dict[str, RegressorMixin] | None = None,
+    base_feature_sets: dict[str, str] | None = None,
+    **output_paths: str | Path,
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    dict[str, pd.DataFrame],
+    dict[str, RegressorMixin],
+    dict[str, Path],
+]:
+    """Run independent locked test evaluation for validation-selected candidates."""
+    source = Path(feature_data_path)
+    if not source.is_file():
+        raise FileNotFoundError(
+            f"Feature dataset not found: {source}. Run scripts/run_pipeline.py first."
+        )
+
+    feature_data = pd.read_csv(source, parse_dates=[DATETIME_COLUMN])
+    train_data, validation_data, test_data = split_chronologically(feature_data)
+    development_data = pd.concat([train_data, validation_data], ignore_index=True)
+
+    metrics, predictions, fitted_candidates = train_and_evaluate_locked_test_candidates(
+        development_data,
+        test_data,
+        candidate_names=candidate_names,
+        base_models=base_models,
+        base_feature_sets=base_feature_sets,
+    )
+
+    comparison = build_locked_test_comparison(metrics)
+    analyses = {
+        "residual_summary": summarize_residuals(predictions),
+        "error_by_hour": summarize_errors_by_hour(predictions),
+        "large_errors": identify_large_errors(predictions),
+        "feature_importance": extract_model_evaluation_feature_importance(fitted_candidates),
+    }
+    saved_paths = save_model_evaluation_results(
+        metrics,
+        comparison,
+        predictions,
+        analyses["residual_summary"],
+        analyses["error_by_hour"],
+        analyses["large_errors"],
+        analyses["feature_importance"],
+        **output_paths,
+    )
+    return (
+        metrics,
+        comparison,
+        predictions,
+        analyses,
+        fitted_candidates,
+        saved_paths,
+    )
 
 
 def run_pipeline() -> None:

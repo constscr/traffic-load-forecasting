@@ -82,6 +82,31 @@ EXTENDED_ENSEMBLE_PREDICTIONS_PATH = (
 )
 EXTENDED_ENSEMBLE_FIGURE_PATH = FIGURES_DIR / "extended_ensemble_comparison.png"
 
+# Model evaluation outputs for locked test set and research analyses
+MODEL_EVALUATION_CANDIDATES = ("catboost", "voting_regressor")
+LARGE_ERROR_QUANTILE = 0.95
+LOCKED_TEST_METRICS_PATH = METRICS_DIR / "locked_test_metrics.csv"
+LOCKED_TEST_COMPARISON_PATH = TABLES_DIR / "locked_test_model_comparison.csv"
+LOCKED_TEST_PREDICTIONS_PATH = PREDICTIONS_DIR / "locked_test_predictions.csv"
+MODEL_EVALUATION_RESIDUAL_SUMMARY_PATH = TABLES_DIR / "model_evaluation_residual_summary.csv"
+MODEL_EVALUATION_ERROR_BY_HOUR_PATH = TABLES_DIR / "model_evaluation_error_by_hour.csv"
+MODEL_EVALUATION_LARGE_ERRORS_PATH = TABLES_DIR / "model_evaluation_large_errors.csv"
+MODEL_EVALUATION_FEATURE_IMPORTANCE_PATH = TABLES_DIR / "model_evaluation_feature_importance.csv"
+MODEL_EVALUATION_TEST_COMPARISON_FIGURE_PATH = (
+    FIGURES_DIR / "model_evaluation_test_model_comparison.png"
+)
+MODEL_EVALUATION_ACTUAL_VS_PREDICTED_FIGURE_PATH = (
+    FIGURES_DIR / "model_evaluation_actual_vs_predicted.png"
+)
+MODEL_EVALUATION_RESIDUAL_COMPARISON_FIGURE_PATH = (
+    FIGURES_DIR / "model_evaluation_residual_comparison.png"
+)
+MODEL_EVALUATION_ERROR_BY_HOUR_FIGURE_PATH = FIGURES_DIR / "model_evaluation_error_by_hour.png"
+MODEL_EVALUATION_LARGE_ERRORS_FIGURE_PATH = FIGURES_DIR / "model_evaluation_large_errors.png"
+MODEL_EVALUATION_FEATURE_IMPORTANCE_FIGURE_PATH = (
+    FIGURES_DIR / "model_evaluation_feature_importance.png"
+)
+
 # Persist only the model selected by validation results from the completed model stages
 PERSISTED_EXPERIMENT_MODELS = ("catboost",)
 
