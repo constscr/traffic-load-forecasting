@@ -511,6 +511,10 @@ def plot_extended_ensemble_comparison(
             ),
         ],
         title="Model group",
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1.0),
+        borderaxespad=0.0,
+        frameon=True,
     )
     figure.tight_layout()
     _save_figure(figure, output_path)
