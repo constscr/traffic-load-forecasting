@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
@@ -9,13 +8,17 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Patch
 from sklearn.pipeline import Pipeline
 
-from traffic_forecasting.config import DATETIME_COLUMN, TARGET_COLUMN
+from traffic_forecasting.config import DATETIME_COLUMN
+from traffic_forecasting.evaluation import (
+    ABSOLUTE_ERROR_COLUMN,
+    ACTUAL_COLUMN,
+    PREDICTED_COLUMN,
+    RESIDUAL_COLUMN,
+    add_prediction_errors,
+    extract_feature_importance,
+)
 from traffic_forecasting.feature_sets import get_feature_set_scenarios
 
-ACTUAL_COLUMN = f"actual_{TARGET_COLUMN}"
-PREDICTED_COLUMN = f"predicted_{TARGET_COLUMN}"
-RESIDUAL_COLUMN = "residual"
-ABSOLUTE_ERROR_COLUMN = "absolute_error"
 DEFAULT_FIGURE_SIZE = (12, 6)
 
 # Unified visualization color palette
@@ -31,6 +34,14 @@ SCATTER_COLOR = PASTEL_BLUE
 RESIDUAL_COLOR = PASTEL_LAVENDER
 HOURLY_ERROR_COLOR = PASTEL_MINT
 
+MODEL_LINE_COLORS = (
+    PASTEL_PEACH,
+    PASTEL_LAVENDER,
+    PASTEL_MINT,
+    PASTEL_BLUE,
+    NEUTRAL_DARK_GRAY,
+)
+
 MODEL_COMPARISON_BASE_COLOR = PASTEL_BLUE
 MODEL_COMPARISON_HIGHLIGHT_COLOR = PASTEL_PEACH
 
@@ -40,6 +51,14 @@ FEATURE_IMPORTANCE_HIGHLIGHT_TOP_N = 3
 
 REFERENCE_LINE_COLOR = NEUTRAL_DARK_GRAY
 GRID_ALPHA = 0.25
+
+
+def _build_label_palette(labels: list[str]) -> dict[str, str]:
+    """Build a deterministic color mapping for categorical plot labels."""
+    return {
+        label: MODEL_LINE_COLORS[index % len(MODEL_LINE_COLORS)]
+        for index, label in enumerate(labels)
+    }
 
 
 def _save_figure(figure: Figure, output_path: str | Path | None) -> None:
@@ -84,19 +103,6 @@ def _select_prediction_rows(
 
     selected[DATETIME_COLUMN] = pd.to_datetime(selected[DATETIME_COLUMN], errors="raise")
     return selected.sort_values(DATETIME_COLUMN).reset_index(drop=True)
-
-
-def add_prediction_errors(predictions: pd.DataFrame) -> pd.DataFrame:
-    """Add signed residual and absolute error columns to prediction rows."""
-    required_columns = {ACTUAL_COLUMN, PREDICTED_COLUMN}
-    missing_columns = sorted(required_columns - set(predictions.columns))
-    if missing_columns:
-        raise ValueError(f"Missing prediction columns: {missing_columns}")
-
-    result = predictions.copy()
-    result[RESIDUAL_COLUMN] = result[ACTUAL_COLUMN] - result[PREDICTED_COLUMN]
-    result[ABSOLUTE_ERROR_COLUMN] = result[RESIDUAL_COLUMN].abs()
-    return result
 
 
 def plot_traffic_volume_time_series(
@@ -330,36 +336,6 @@ def plot_model_comparison(
     return figure, axis
 
 
-def extract_feature_importance(model_pipeline: Pipeline) -> pd.DataFrame:
-    """Extract transformed feature names and importance from a fitted model pipeline."""
-    if not isinstance(model_pipeline, Pipeline):
-        raise TypeError("model_pipeline must be an sklearn Pipeline.")
-    required_steps = {"preprocessing", "model"}
-    if not required_steps.issubset(model_pipeline.named_steps):
-        raise ValueError("Pipeline must contain preprocessing and model steps.")
-
-    preprocessor = model_pipeline.named_steps["preprocessing"]
-    model = model_pipeline.named_steps["model"]
-    feature_names = preprocessor.get_feature_names_out()
-
-    if hasattr(model, "feature_importances_"):
-        importances = np.asarray(model.feature_importances_, dtype=float)
-    elif hasattr(model, "get_feature_importance"):
-        importances = np.asarray(model.get_feature_importance(), dtype=float)
-    else:
-        raise ValueError("The fitted model does not expose feature importance.")
-
-    if len(feature_names) != len(importances):
-        raise ValueError("Transformed feature names and importance values have different lengths.")
-
-    clean_names = [name.split("__", maxsplit=1)[-1] for name in feature_names]
-    return (
-        pd.DataFrame({"feature": clean_names, "importance": importances})
-        .sort_values("importance", ascending=False)
-        .reset_index(drop=True)
-    )
-
-
 def plot_feature_importance(
     model_pipeline: Pipeline,
     *,
@@ -516,6 +492,240 @@ def plot_extended_ensemble_comparison(
         borderaxespad=0.0,
         frameon=True,
     )
+    figure.tight_layout()
+    _save_figure(figure, output_path)
+    return figure, axis
+
+
+def plot_locked_test_comparison(
+    metrics: pd.DataFrame,
+    *,
+    metric: str = "rmse",
+    output_path: str | Path | None = None,
+) -> tuple[Figure, Axes]:
+    """Compare preselected candidates on the locked test split without ranking them."""
+    required_columns = {"model", "model_group", "split", "used_for_model_selection", metric}
+    missing_columns = sorted(required_columns - set(metrics.columns))
+    if missing_columns:
+        raise ValueError(f"Missing locked test evaluation columns: {missing_columns}")
+
+    selected = metrics.loc[metrics["split"] == "test"].copy()
+    if selected.empty:
+        raise ValueError("Locked test comparison requires test metrics.")
+    if selected["used_for_model_selection"].any():
+        raise ValueError("Locked test metrics cannot be marked for model selection.")
+
+    group_order = selected["model_group"].drop_duplicates().tolist()
+    group_palette = _build_label_palette(group_order)
+
+    figure, axis = plt.subplots(figsize=(9, 6))
+    sns.barplot(
+        data=selected,
+        x="model",
+        y=metric,
+        hue="model_group",
+        hue_order=group_order,
+        ax=axis,
+        palette=group_palette,
+        saturation=1.0,
+        edgecolor="white",
+        linewidth=0.6,
+    )
+    axis.set(
+        title=f"Locked Test Evaluation by {metric.upper()}",
+        xlabel="Validation-selected candidate",
+        ylabel=metric.upper(),
+    )
+    axis.grid(axis="y", alpha=GRID_ALPHA)
+    axis.legend(title="Candidate group")
+    figure.tight_layout()
+    _save_figure(figure, output_path)
+    return figure, axis
+
+
+def plot_model_evaluation_actual_vs_predicted(
+    predictions: pd.DataFrame,
+    *,
+    split: str = "test",
+    output_path: str | Path | None = None,
+) -> tuple[Figure, Axes]:
+    """Plot actual values and all fixed candidate predictions chronologically."""
+    required_columns = {
+        "model",
+        "split",
+        DATETIME_COLUMN,
+        ACTUAL_COLUMN,
+        PREDICTED_COLUMN,
+    }
+    missing_columns = sorted(required_columns - set(predictions.columns))
+    if missing_columns:
+        raise ValueError(f"Missing prediction columns: {missing_columns}")
+
+    selected = predictions.loc[predictions["split"] == split].copy()
+    if selected.empty:
+        raise ValueError(f"No prediction rows found for split: {split}")
+    selected[DATETIME_COLUMN] = pd.to_datetime(selected[DATETIME_COLUMN], errors="raise")
+    actual_by_timestamp = selected.drop_duplicates(DATETIME_COLUMN).sort_values(DATETIME_COLUMN)
+
+    figure, axis = plt.subplots(figsize=DEFAULT_FIGURE_SIZE)
+    axis.plot(
+        actual_by_timestamp[DATETIME_COLUMN],
+        actual_by_timestamp[ACTUAL_COLUMN],
+        label="Actual",
+        color=ACTUAL_LINE_COLOR,
+        linewidth=1.4,
+    )
+    model_order = selected["model"].drop_duplicates().tolist()
+    model_palette = _build_label_palette(model_order)
+
+    for model_name, model_predictions in selected.groupby("model", sort=False):
+        model_predictions = model_predictions.sort_values(DATETIME_COLUMN)
+        axis.plot(
+            model_predictions[DATETIME_COLUMN],
+            model_predictions[PREDICTED_COLUMN],
+            label=model_name,
+            color=model_palette[model_name],
+            linewidth=1.0,
+            alpha=0.85,
+        )
+
+    axis.set(
+        title=f"Actual vs Validation-Selected Candidate Predictions ({split.title()})",
+        xlabel="Date and time",
+        ylabel="Traffic volume",
+    )
+    axis.legend()
+    axis.grid(alpha=GRID_ALPHA)
+    figure.autofmt_xdate()
+    figure.tight_layout()
+    _save_figure(figure, output_path)
+    return figure, axis
+
+
+def plot_residual_comparison(
+    predictions: pd.DataFrame,
+    *,
+    split: str = "test",
+    output_path: str | Path | None = None,
+) -> tuple[Figure, Axes]:
+    """Compare residual distributions for fixed evaluation candidates."""
+    error_data = add_prediction_errors(predictions)
+    selected = error_data.loc[error_data["split"] == split].copy()
+    if selected.empty:
+        raise ValueError(f"No prediction rows found for split: {split}")
+
+    model_order = selected["model"].drop_duplicates().tolist()
+    model_palette = _build_label_palette(model_order)
+
+    figure, axis = plt.subplots(figsize=(10, 6))
+    sns.histplot(
+        data=selected,
+        x=RESIDUAL_COLUMN,
+        hue="model",
+        hue_order=model_order,
+        bins=40,
+        element="step",
+        stat="density",
+        common_norm=False,
+        ax=axis,
+        palette=model_palette,
+    )
+    axis.axvline(0, color=REFERENCE_LINE_COLOR, linestyle="--", linewidth=1.2)
+    axis.set(
+        title=f"Residual Comparison ({split.title()} Predictions)",
+        xlabel="Residual: actual - predicted",
+        ylabel="Density",
+    )
+    figure.tight_layout()
+    _save_figure(figure, output_path)
+    return figure, axis
+
+
+def plot_error_by_hour_comparison(
+    hourly_errors: pd.DataFrame,
+    *,
+    split: str = "test",
+    output_path: str | Path | None = None,
+) -> tuple[Figure, Axes]:
+    """Compare mean absolute error by hour for fixed evaluation candidates."""
+    required_columns = {"model", "split", "hour", "mae"}
+    missing_columns = sorted(required_columns - set(hourly_errors.columns))
+    if missing_columns:
+        raise ValueError(f"Missing hourly error columns: {missing_columns}")
+
+    selected = hourly_errors.loc[hourly_errors["split"] == split].copy()
+    if selected.empty:
+        raise ValueError(f"No hourly error rows found for split: {split}")
+
+    model_order = selected["model"].drop_duplicates().tolist()
+    model_palette = _build_label_palette(model_order)
+
+    figure, axis = plt.subplots(figsize=(11, 6))
+    sns.lineplot(
+        data=selected,
+        x="hour",
+        y="mae",
+        hue="model",
+        hue_order=model_order,
+        marker="o",
+        ax=axis,
+        palette=model_palette,
+    )
+    axis.set(
+        title=f"Mean Absolute Error by Hour ({split.title()})",
+        xlabel="Hour of day",
+        ylabel="Mean absolute error",
+    )
+    axis.set_xticks(range(24))
+    axis.grid(alpha=GRID_ALPHA)
+    figure.tight_layout()
+    _save_figure(figure, output_path)
+    return figure, axis
+
+
+def plot_large_errors(
+    large_errors: pd.DataFrame,
+    *,
+    split: str = "test",
+    output_path: str | Path | None = None,
+) -> tuple[Figure, Axes]:
+    """Plot the largest absolute errors over time for each candidate."""
+    required_columns = {
+        "model",
+        "split",
+        DATETIME_COLUMN,
+        ABSOLUTE_ERROR_COLUMN,
+    }
+    missing_columns = sorted(required_columns - set(large_errors.columns))
+    if missing_columns:
+        raise ValueError(f"Missing large-error columns: {missing_columns}")
+
+    selected = large_errors.loc[large_errors["split"] == split].copy()
+    if selected.empty:
+        raise ValueError(f"No large-error rows found for split: {split}")
+    selected[DATETIME_COLUMN] = pd.to_datetime(selected[DATETIME_COLUMN], errors="raise")
+
+    model_order = selected["model"].drop_duplicates().tolist()
+    model_palette = _build_label_palette(model_order)
+
+    figure, axis = plt.subplots(figsize=(12, 6))
+    sns.scatterplot(
+        data=selected,
+        x=DATETIME_COLUMN,
+        y=ABSOLUTE_ERROR_COLUMN,
+        hue="model",
+        hue_order=model_order,
+        alpha=0.75,
+        ax=axis,
+        palette=model_palette,
+    )
+    axis.set(
+        title=f"Large Prediction Errors ({split.title()} Predictions)",
+        xlabel="Date and time",
+        ylabel="Absolute error",
+    )
+    axis.grid(alpha=GRID_ALPHA)
+    figure.autofmt_xdate()
     figure.tight_layout()
     _save_figure(figure, output_path)
     return figure, axis

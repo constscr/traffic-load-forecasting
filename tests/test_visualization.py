@@ -16,19 +16,26 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 
 from traffic_forecasting.config import DATETIME_COLUMN, TARGET_COLUMN
-from traffic_forecasting.visualization import (
+from traffic_forecasting.evaluation import (
     ABSOLUTE_ERROR_COLUMN,
     ACTUAL_COLUMN,
     PREDICTED_COLUMN,
     RESIDUAL_COLUMN,
     add_prediction_errors,
     extract_feature_importance,
+)
+from traffic_forecasting.visualization import (
     plot_actual_vs_predicted,
     plot_error_by_hour,
+    plot_error_by_hour_comparison,
     plot_extended_ensemble_comparison,
     plot_feature_importance,
     plot_feature_set_comparison,
+    plot_large_errors,
+    plot_locked_test_comparison,
     plot_model_comparison,
+    plot_model_evaluation_actual_vs_predicted,
+    plot_residual_comparison,
     plot_residual_distribution,
     plot_traffic_volume_time_series,
     plot_true_vs_predicted,
@@ -149,6 +156,114 @@ def test_extended_ensemble_comparison_plot_highlights_voting(tmp_path) -> None:
     )
 
     _assert_plot_result(result, output_path)
+
+
+def test_model_evaluation_plots_use_locked_test_outputs(tmp_path) -> None:
+    periods = 24
+    actual = np.linspace(1_000, 2_000, periods)
+    candidate_predictions = pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    "model": model,
+                    "split": ["test"] * periods,
+                    DATETIME_COLUMN: pd.date_range(
+                        "2026-01-01",
+                        periods=periods,
+                        freq="h",
+                    ),
+                    ACTUAL_COLUMN: actual,
+                    PREDICTED_COLUMN: actual + offset,
+                }
+            )
+            for model, offset in (("catboost", 20.0), ("voting_regressor", -10.0))
+        ],
+        ignore_index=True,
+    )
+    metrics = pd.DataFrame(
+        {
+            "model": ["catboost", "voting_regressor"],
+            "model_group": ["strongest_individual", "extended_ensemble"],
+            "split": ["test", "test"],
+            "used_for_model_selection": [False, False],
+            "rmse": [20.0, 10.0],
+        }
+    )
+    hourly_errors = pd.DataFrame(
+        {
+            "model": ["catboost"] * periods + ["voting_regressor"] * periods,
+            "split": ["test"] * (periods * 2),
+            "hour": list(range(periods)) * 2,
+            "mae": [20.0] * periods + [10.0] * periods,
+        }
+    )
+    large_errors = add_prediction_errors(candidate_predictions).iloc[[0, periods]].copy()
+
+    plot_cases = (
+        (
+            plot_locked_test_comparison,
+            (metrics,),
+            tmp_path / "locked_test_comparison.png",
+        ),
+        (
+            plot_model_evaluation_actual_vs_predicted,
+            (candidate_predictions,),
+            tmp_path / "actual_vs_predicted.png",
+        ),
+        (
+            plot_residual_comparison,
+            (candidate_predictions,),
+            tmp_path / "residual_comparison.png",
+        ),
+        (
+            plot_error_by_hour_comparison,
+            (hourly_errors,),
+            tmp_path / "hourly_comparison.png",
+        ),
+        (
+            plot_large_errors,
+            (large_errors,),
+            tmp_path / "large_errors.png",
+        ),
+    )
+    for plot_function, arguments, output_path in plot_cases:
+        result = plot_function(*arguments, output_path=output_path)
+        _assert_plot_result(result, output_path)
+
+
+def test_model_evaluation_actual_vs_predicted_plots_all_candidate_models(tmp_path) -> None:
+    periods = 12
+    actual = np.linspace(1_000, 1_500, periods)
+    timestamps = pd.date_range("2026-01-01", periods=periods, freq="h")
+    predictions = pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    "model": model,
+                    "split": ["test"] * periods,
+                    DATETIME_COLUMN: timestamps,
+                    ACTUAL_COLUMN: actual,
+                    PREDICTED_COLUMN: actual + offset,
+                }
+            )
+            for model, offset in (
+                ("catboost", 10.0),
+                ("xgboost", 20.0),
+                ("random_forest", -15.0),
+                ("voting_regressor", -5.0),
+            )
+        ],
+        ignore_index=True,
+    )
+
+    figure, axis = plot_model_evaluation_actual_vs_predicted(
+        predictions,
+        output_path=tmp_path / "many_candidates.png",
+    )
+
+    labels = [line.get_label() for line in axis.get_lines()]
+    assert {"Actual", "catboost", "xgboost", "random_forest", "voting_regressor"}.issubset(labels)
+    plt.close(figure)
 
 
 def test_feature_importance_uses_transformed_feature_names(tmp_path) -> None:
