@@ -14,6 +14,9 @@ from traffic_forecasting.config import (
     ENSEMBLE_METRICS_PATH,
     EXPERIMENT_COMPARISON_PATH,
     EXPERIMENT_METRICS_PATH,
+    EXTENDED_ENSEMBLE_COMPARISON_PATH,
+    EXTENDED_ENSEMBLE_METRICS_PATH,
+    EXTENDED_ENSEMBLE_PREDICTIONS_PATH,
     FEATURE_SET_COMPARISON_PATH,
     FEATURE_SET_METRICS_PATH,
     FEATURE_SET_PREDICTIONS_PATH,
@@ -44,9 +47,11 @@ from traffic_forecasting.feature_sets import (
 )
 from traffic_forecasting.features import build_feature_dataset
 from traffic_forecasting.models import (
+    build_voting_regressor,
     get_baseline_model_registry,
     get_core_ensemble_model_registry,
     get_experiment_model_registry,
+    get_extended_ensemble_base_model_registry,
     get_feature_set_model_registry,
     get_hyperparameter_search_spaces,
     get_tuning_model_registry,
@@ -54,9 +59,16 @@ from traffic_forecasting.models import (
 from traffic_forecasting.preprocessing import (
     build_preprocessor,
     prepare_model_inputs,
+    select_model_features,
     split_chronologically,
     transform_model_inputs,
 )
+
+EXTENDED_ENSEMBLE_FEATURE_SETS = {
+    "catboost": "temporal_calendar_lag",
+    "xgboost": "full",
+    "random_forest": "temporal_calendar_lag",
+}
 
 
 def _fit_and_evaluate_model_registry(
@@ -918,6 +930,211 @@ def run_feature_set_experiment_pipeline(
     )
     comparison = build_feature_set_comparison(metrics)
     output_paths = save_feature_set_experiment_results(
+        metrics,
+        comparison,
+        predictions,
+        metrics_path=metrics_path,
+        comparison_path=comparison_path,
+        predictions_path=predictions_path,
+    )
+    return metrics, comparison, predictions, output_paths
+
+
+def build_extended_ensemble_candidates(
+    base_models: dict[str, RegressorMixin] | None = None,
+    base_feature_sets: dict[str, str] | None = None,
+) -> dict[str, RegressorMixin]:
+    """Build strongest individual pipelines and their equal-weight voting ensemble."""
+    models = get_extended_ensemble_base_model_registry() if base_models is None else base_models
+    feature_sets = (
+        EXTENDED_ENSEMBLE_FEATURE_SETS if base_feature_sets is None else base_feature_sets
+    )
+    if set(models) != set(feature_sets):
+        raise ValueError("Base model names and feature set assignments must match.")
+
+    individual_pipelines = {
+        model_name: build_feature_set_pipeline(
+            clone(model),
+            get_feature_set_columns(feature_sets[model_name]),
+        )
+        for model_name, model in models.items()
+    }
+    voting_estimators = [
+        (model_name, clone(model_pipeline))
+        for model_name, model_pipeline in individual_pipelines.items()
+    ]
+    return {
+        **individual_pipelines,
+        "voting_regressor": build_voting_regressor(voting_estimators),
+    }
+
+
+def train_and_evaluate_extended_ensembles(
+    train_data: pd.DataFrame,
+    validation_data: pd.DataFrame,
+    *,
+    base_models: dict[str, RegressorMixin] | None = None,
+    base_feature_sets: dict[str, str] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, RegressorMixin]]:
+    """Evaluate strongest individual models and voting on validation only."""
+    required_columns = {DATETIME_COLUMN, TARGET_COLUMN}
+    for split_name, data in {
+        "train": train_data,
+        "validation": validation_data,
+    }.items():
+        missing_columns = sorted(required_columns - set(data.columns))
+        if missing_columns:
+            raise ValueError(f"Missing required columns in {split_name} data: {missing_columns}")
+
+    feature_sets = (
+        EXTENDED_ENSEMBLE_FEATURE_SETS if base_feature_sets is None else base_feature_sets
+    )
+    voting_feature_set_strategy = (
+        next(iter(feature_sets.values()))
+        if len(set(feature_sets.values())) == 1
+        else "mixed_best_feature_sets"
+    )
+
+    candidates = build_extended_ensemble_candidates(
+        base_models=base_models,
+        base_feature_sets=base_feature_sets,
+    )
+
+    X_train = select_model_features(train_data)
+    X_validation = select_model_features(validation_data)
+    y_train = train_data[TARGET_COLUMN].copy()
+    y_validation = validation_data[TARGET_COLUMN].copy()
+
+    validation_timestamps = validation_data[DATETIME_COLUMN].reset_index(drop=True)
+    validation_actual = y_validation.reset_index(drop=True)
+
+    metric_rows: list[dict[str, str | float]] = []
+    prediction_frames: list[pd.DataFrame] = []
+    fitted_models: dict[str, RegressorMixin] = {}
+
+    for model_name, model in candidates.items():
+        model_group = (
+            "extended_ensemble" if model_name == "voting_regressor" else "strongest_individual"
+        )
+        feature_set_strategy = (
+            voting_feature_set_strategy
+            if model_name == "voting_regressor"
+            else feature_sets[model_name]
+        )
+
+        model.fit(X_train, y_train)
+        predictions = model.predict(X_validation)
+        fitted_models[model_name] = model
+
+        metric_rows.append(
+            {
+                "model": model_name,
+                "model_group": model_group,
+                "feature_set_strategy": feature_set_strategy,
+                "split": "validation",
+                **calculate_regression_metrics(y_validation, predictions),
+            }
+        )
+
+        prediction_frames.append(
+            pd.DataFrame(
+                {
+                    "model": model_name,
+                    "model_group": model_group,
+                    "feature_set_strategy": feature_set_strategy,
+                    "split": "validation",
+                    DATETIME_COLUMN: validation_timestamps,
+                    f"actual_{TARGET_COLUMN}": validation_actual,
+                    f"predicted_{TARGET_COLUMN}": predictions,
+                }
+            )
+        )
+
+    metrics = pd.DataFrame(metric_rows).sort_values("rmse").reset_index(drop=True)
+    predictions = pd.concat(prediction_frames, ignore_index=True)
+
+    return metrics, predictions, fitted_models
+
+
+def build_extended_ensemble_comparison(metrics: pd.DataFrame) -> pd.DataFrame:
+    """Rank validation candidates against the best individual model."""
+    required_columns = {"model", "model_group", "feature_set_strategy", "split", "rmse"}
+    missing_columns = sorted(required_columns - set(metrics.columns))
+    if missing_columns:
+        raise ValueError(f"Missing extended ensemble metric columns: {missing_columns}")
+
+    validation_metrics = metrics.loc[metrics["split"] == "validation"].copy()
+    individual_metrics = validation_metrics.loc[
+        validation_metrics["model_group"] == "strongest_individual"
+    ]
+    if individual_metrics.empty:
+        raise ValueError("At least one strongest individual model is required.")
+
+    best_individual_rmse = float(individual_metrics["rmse"].min())
+    validation_metrics = validation_metrics.sort_values("rmse").reset_index(drop=True)
+    validation_metrics.insert(
+        0,
+        "validation_rank",
+        range(1, len(validation_metrics) + 1),
+    )
+    validation_metrics["best_individual_rmse"] = best_individual_rmse
+    validation_metrics["rmse_improvement_vs_best_individual_pct"] = (
+        (best_individual_rmse - validation_metrics["rmse"]) / best_individual_rmse * 100
+    )
+    return validation_metrics
+
+
+def save_extended_ensemble_results(
+    metrics: pd.DataFrame,
+    comparison: pd.DataFrame,
+    predictions: pd.DataFrame,
+    *,
+    metrics_path: str | Path = EXTENDED_ENSEMBLE_METRICS_PATH,
+    comparison_path: str | Path = EXTENDED_ENSEMBLE_COMPARISON_PATH,
+    predictions_path: str | Path = EXTENDED_ENSEMBLE_PREDICTIONS_PATH,
+) -> tuple[Path, Path, Path]:
+    """Save extended ensemble metrics, comparison, and validation predictions."""
+    destinations = (
+        Path(metrics_path),
+        Path(comparison_path),
+        Path(predictions_path),
+    )
+    for data, destination in zip(
+        (metrics, comparison, predictions),
+        destinations,
+        strict=True,
+    ):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        data.to_csv(destination, index=False)
+    return destinations
+
+
+def run_extended_ensemble_pipeline(
+    *,
+    feature_data_path: str | Path = PROCESSED_DATA_PATH,
+    base_models: dict[str, RegressorMixin] | None = None,
+    base_feature_sets: dict[str, str] | None = None,
+    metrics_path: str | Path = EXTENDED_ENSEMBLE_METRICS_PATH,
+    comparison_path: str | Path = EXTENDED_ENSEMBLE_COMPARISON_PATH,
+    predictions_path: str | Path = EXTENDED_ENSEMBLE_PREDICTIONS_PATH,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, tuple[Path, Path, Path]]:
+    """Run the validation-only extended ensemble experiment."""
+    source = Path(feature_data_path)
+    if not source.is_file():
+        raise FileNotFoundError(
+            f"Feature dataset not found: {source}. Run scripts/run_pipeline.py first."
+        )
+
+    feature_data = pd.read_csv(source, parse_dates=[DATETIME_COLUMN])
+    train_data, validation_data, _ = split_chronologically(feature_data)
+    metrics, predictions, _ = train_and_evaluate_extended_ensembles(
+        train_data,
+        validation_data,
+        base_models=base_models,
+        base_feature_sets=base_feature_sets,
+    )
+    comparison = build_extended_ensemble_comparison(metrics)
+    output_paths = save_extended_ensemble_results(
         metrics,
         comparison,
         predictions,

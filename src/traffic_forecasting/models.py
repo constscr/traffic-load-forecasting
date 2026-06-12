@@ -2,7 +2,7 @@ from catboost import CatBoostRegressor
 from lightgbm import LGBMRegressor
 from sklearn.base import RegressorMixin
 from sklearn.dummy import DummyRegressor
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor, VotingRegressor
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.svm import SVR
@@ -124,6 +124,24 @@ def get_feature_set_model_registry() -> dict[str, RegressorMixin]:
         "xgboost": build_xgb_regressor(),
         "random_forest": build_random_forest_regressor(),
     }
+
+
+def get_extended_ensemble_base_model_registry() -> dict[str, RegressorMixin]:
+    """Return the strongest individual models selected in completed stages."""
+    return {
+        "catboost": build_catboost_regressor(),
+        "xgboost": build_xgb_regressor(),
+        "random_forest": build_random_forest_regressor(),
+    }
+
+
+def build_voting_regressor(
+    estimators: list[tuple[str, RegressorMixin]],
+) -> VotingRegressor:
+    """Build an equal-weight voting ensemble from provided base estimators."""
+    if len(estimators) < 2:
+        raise ValueError("VotingRegressor requires at least two base estimators.")
+    return VotingRegressor(estimators=estimators)
 
 
 def get_tuning_model_registry() -> dict[str, RegressorMixin]:

@@ -25,6 +25,7 @@ from traffic_forecasting.visualization import (
     extract_feature_importance,
     plot_actual_vs_predicted,
     plot_error_by_hour,
+    plot_extended_ensemble_comparison,
     plot_feature_importance,
     plot_feature_set_comparison,
     plot_model_comparison,
@@ -123,6 +124,29 @@ def test_feature_set_comparison_plot_uses_validation_metrics(tmp_path) -> None:
     output_path = tmp_path / "feature_sets.png"
 
     result = plot_feature_set_comparison(comparison, output_path=output_path)
+
+    _assert_plot_result(result, output_path)
+
+
+def test_extended_ensemble_comparison_plot_highlights_voting(tmp_path) -> None:
+    comparison = pd.DataFrame(
+        {
+            "model": ["catboost", "xgboost", "voting_regressor"],
+            "model_group": [
+                "strongest_individual",
+                "strongest_individual",
+                "extended_ensemble",
+            ],
+            "split": ["validation"] * 3,
+            "rmse": [236.0, 249.0, 230.0],
+        }
+    )
+    output_path = tmp_path / "extended_ensemble.png"
+
+    result = plot_extended_ensemble_comparison(
+        comparison,
+        output_path=output_path,
+    )
 
     _assert_plot_result(result, output_path)
 
