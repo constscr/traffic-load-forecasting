@@ -26,6 +26,7 @@ from traffic_forecasting.visualization import (
     plot_actual_vs_predicted,
     plot_error_by_hour,
     plot_feature_importance,
+    plot_feature_set_comparison,
     plot_model_comparison,
     plot_residual_distribution,
     plot_traffic_volume_time_series,
@@ -106,6 +107,22 @@ def test_model_comparison_plot_uses_requested_metric(tmp_path) -> None:
     output_path = tmp_path / "comparison.png"
 
     result = plot_model_comparison(comparison, output_path=output_path)
+
+    _assert_plot_result(result, output_path)
+
+
+def test_feature_set_comparison_plot_uses_validation_metrics(tmp_path) -> None:
+    comparison = pd.DataFrame(
+        {
+            "feature_set_label": ["Temporal + calendar", "Full feature set"] * 2,
+            "model": ["catboost", "catboost", "xgboost", "xgboost"],
+            "split": ["validation"] * 4,
+            "rmse": [400.0, 237.0, 420.0, 249.0],
+        }
+    )
+    output_path = tmp_path / "feature_sets.png"
+
+    result = plot_feature_set_comparison(comparison, output_path=output_path)
 
     _assert_plot_result(result, output_path)
 

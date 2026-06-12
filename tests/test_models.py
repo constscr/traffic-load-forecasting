@@ -25,6 +25,7 @@ from traffic_forecasting.models import (
     get_baseline_model_registry,
     get_core_ensemble_model_registry,
     get_experiment_model_registry,
+    get_feature_set_model_registry,
     get_hyperparameter_search_spaces,
     get_tuning_model_registry,
 )
@@ -115,6 +116,13 @@ def test_experiment_registry_combines_completed_model_groups() -> None:
         "lightgbm",
         "catboost",
     )
+    assert all(is_regressor(model) for model in registry.values())
+
+
+def test_feature_set_registry_contains_only_selected_robustness_models() -> None:
+    registry = get_feature_set_model_registry()
+
+    assert tuple(registry) == ("catboost", "xgboost", "random_forest")
     assert all(is_regressor(model) for model in registry.values())
 
 
