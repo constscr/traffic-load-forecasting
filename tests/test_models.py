@@ -2,7 +2,7 @@ from catboost import CatBoostRegressor
 from lightgbm import LGBMRegressor
 from sklearn.base import RegressorMixin, is_regressor
 from sklearn.dummy import DummyRegressor
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor, VotingRegressor
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.svm import SVR
@@ -21,10 +21,12 @@ from traffic_forecasting.models import (
     build_random_forest_regressor,
     build_ridge_regressor,
     build_svr_regressor,
+    build_voting_regressor,
     build_xgb_regressor,
     get_baseline_model_registry,
     get_core_ensemble_model_registry,
     get_experiment_model_registry,
+    get_extended_ensemble_base_model_registry,
     get_feature_set_model_registry,
     get_hyperparameter_search_spaces,
     get_tuning_model_registry,
@@ -124,6 +126,15 @@ def test_feature_set_registry_contains_only_selected_robustness_models() -> None
 
     assert tuple(registry) == ("catboost", "xgboost", "random_forest")
     assert all(is_regressor(model) for model in registry.values())
+
+
+def test_voting_constructor_and_extended_registry() -> None:
+    registry = get_extended_ensemble_base_model_registry()
+    voting = build_voting_regressor([(name, model) for name, model in registry.items()])
+
+    assert tuple(registry) == ("catboost", "xgboost", "random_forest")
+    assert isinstance(voting, VotingRegressor)
+    assert voting.weights is None
 
 
 def test_tuning_registry_and_search_spaces_cover_primary_models() -> None:
