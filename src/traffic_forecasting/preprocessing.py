@@ -161,9 +161,17 @@ def prepare_model_inputs(
     )
 
 
-def build_preprocessor() -> ColumnTransformer:
-    """Build preprocessing for numeric, categorical, and passthrough features."""
+def build_preprocessor(
+    feature_columns: tuple[str, ...] | None = None,
+) -> ColumnTransformer:
+    """Build preprocessing for the full model or a selected feature scenario."""
     feature_groups = get_model_feature_groups()
+    selected_columns = get_model_feature_columns() if feature_columns is None else feature_columns
+    unknown_columns = sorted(set(selected_columns) - set(get_model_feature_columns()))
+    if unknown_columns:
+        raise ValueError(f"Unknown preprocessing feature columns: {unknown_columns}")
+    if not selected_columns:
+        raise ValueError("At least one feature column is required for preprocessing.")
 
     continuous_pipeline = Pipeline(
         steps=[
@@ -185,24 +193,22 @@ def build_preprocessor() -> ColumnTransformer:
         ]
     )
 
+    selected_set = set(selected_columns)
+    transformers = []
+    for transformer_name, transformer, group_name in (
+        ("continuous", continuous_pipeline, "continuous_numeric"),
+        ("categorical", categorical_pipeline, "categorical"),
+        ("binary", "passthrough", "binary"),
+        ("cyclical", "passthrough", "cyclical"),
+    ):
+        group_columns = tuple(
+            column for column in feature_groups[group_name] if column in selected_set
+        )
+        if group_columns:
+            transformers.append((transformer_name, transformer, group_columns))
+
     # Binary indicators and cyclical encodings already have model-ready scales.
-    return ColumnTransformer(
-        transformers=[
-            (
-                "continuous",
-                continuous_pipeline,
-                feature_groups["continuous_numeric"],
-            ),
-            (
-                "categorical",
-                categorical_pipeline,
-                feature_groups["categorical"],
-            ),
-            ("binary", "passthrough", feature_groups["binary"]),
-            ("cyclical", "passthrough", feature_groups["cyclical"]),
-        ],
-        remainder="drop",
-    )
+    return ColumnTransformer(transformers=transformers, remainder="drop")
 
 
 def transform_model_inputs(

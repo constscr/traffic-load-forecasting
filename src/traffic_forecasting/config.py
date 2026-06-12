@@ -68,6 +68,12 @@ ERROR_BY_HOUR_FIGURE_PATH = FIGURES_DIR / "validation_error_by_hour.png"
 MODEL_COMPARISON_FIGURE_PATH = FIGURES_DIR / "validation_model_comparison.png"
 FEATURE_IMPORTANCE_FIGURE_PATH = FIGURES_DIR / "catboost_feature_importance.png"
 
+# Feature set experiment outputs
+FEATURE_SET_METRICS_PATH = METRICS_DIR / "feature_set_experiment_metrics.csv"
+FEATURE_SET_COMPARISON_PATH = TABLES_DIR / "feature_set_comparison.csv"
+FEATURE_SET_PREDICTIONS_PATH = PREDICTIONS_DIR / "feature_set_validation_predictions.csv"
+FEATURE_SET_COMPARISON_FIGURE_PATH = FIGURES_DIR / "feature_set_comparison.png"
+
 # Persist only the model selected by validation results from the completed model stages
 PERSISTED_EXPERIMENT_MODELS = ("catboost",)
 
