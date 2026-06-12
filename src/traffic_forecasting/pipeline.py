@@ -3,7 +3,7 @@ from pathlib import Path
 
 import joblib
 import pandas as pd
-from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.base import BaseEstimator, RegressorMixin, clone
 from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.pipeline import Pipeline
@@ -14,6 +14,9 @@ from traffic_forecasting.config import (
     ENSEMBLE_METRICS_PATH,
     EXPERIMENT_COMPARISON_PATH,
     EXPERIMENT_METRICS_PATH,
+    FEATURE_SET_COMPARISON_PATH,
+    FEATURE_SET_METRICS_PATH,
+    FEATURE_SET_PREDICTIONS_PATH,
     INTERIM_DATA_PATH,
     MODEL_COMPARISON_PATH,
     MODELS_DIR,
@@ -34,11 +37,17 @@ from traffic_forecasting.evaluation import (
     calculate_regression_metrics,
     get_tuning_scoring,
 )
+from traffic_forecasting.feature_sets import (
+    get_feature_set_columns,
+    get_feature_set_scenarios,
+    select_feature_set_columns,
+)
 from traffic_forecasting.features import build_feature_dataset
 from traffic_forecasting.models import (
     get_baseline_model_registry,
     get_core_ensemble_model_registry,
     get_experiment_model_registry,
+    get_feature_set_model_registry,
     get_hyperparameter_search_spaces,
     get_tuning_model_registry,
 )
@@ -218,6 +227,19 @@ def build_model_pipeline(model: BaseEstimator) -> Pipeline:
 def build_tuning_pipeline(model: BaseEstimator) -> Pipeline:
     """Build a fold-safe preprocessing and estimator pipeline."""
     return build_model_pipeline(model)
+
+
+def build_feature_set_pipeline(
+    model: BaseEstimator,
+    feature_columns: tuple[str, ...],
+) -> Pipeline:
+    """Build preprocessing and estimation for one selected feature scenario."""
+    return Pipeline(
+        steps=[
+            ("preprocessing", build_preprocessor(feature_columns=feature_columns)),
+            ("model", model),
+        ]
+    )
 
 
 def tune_model_with_time_series_cv(
@@ -729,6 +751,180 @@ def run_experiment_pipeline(
         **{f"{split}_predictions": path for split, path in prediction_paths.items()},
         **{f"{model_name}_pipeline": path for model_name, path in model_paths.items()},
     }
+    return metrics, comparison, predictions, output_paths
+
+
+def train_and_evaluate_feature_sets(
+    train_data: pd.DataFrame,
+    validation_data: pd.DataFrame,
+    *,
+    scenario_names: tuple[str, ...] | None = None,
+    model_registry: dict[str, RegressorMixin] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[tuple[str, str], Pipeline]]:
+    """Evaluate feature scenarios on one shared train and validation sample."""
+    scenarios = get_feature_set_scenarios()
+    selected_scenarios = tuple(scenarios) if scenario_names is None else scenario_names
+    if not selected_scenarios:
+        raise ValueError("At least one feature set scenario is required.")
+    unknown_scenarios = sorted(set(selected_scenarios) - set(scenarios))
+    if unknown_scenarios:
+        raise ValueError(f"Unknown feature set scenarios: {unknown_scenarios}")
+
+    models = get_feature_set_model_registry() if model_registry is None else model_registry
+    if not models:
+        raise ValueError("At least one feature set experiment model is required.")
+
+    required_columns = {DATETIME_COLUMN, TARGET_COLUMN}
+    for split_name, split_data in (
+        ("train", train_data),
+        ("validation", validation_data),
+    ):
+        missing_columns = sorted(required_columns - set(split_data.columns))
+        if missing_columns:
+            raise ValueError(f"Missing required columns in {split_name} data: {missing_columns}")
+
+    y_train = train_data[TARGET_COLUMN].copy()
+    y_validation = validation_data[TARGET_COLUMN].copy()
+    validation_timestamps = validation_data[DATETIME_COLUMN].copy()
+    metric_rows: list[dict[str, str | int | float]] = []
+    prediction_frames: list[pd.DataFrame] = []
+    fitted_pipelines: dict[tuple[str, str], Pipeline] = {}
+
+    for scenario_name in selected_scenarios:
+        scenario = scenarios[scenario_name]
+        feature_columns = get_feature_set_columns(scenario_name)
+        X_train = select_feature_set_columns(train_data, scenario_name)
+        X_validation = select_feature_set_columns(validation_data, scenario_name)
+
+        for model_name, model in models.items():
+            model_pipeline = build_feature_set_pipeline(
+                model=clone(model),
+                feature_columns=feature_columns,
+            )
+            model_pipeline.fit(X_train, y_train)
+            predictions = model_pipeline.predict(X_validation)
+            fitted_pipelines[(scenario_name, model_name)] = model_pipeline
+            metric_rows.append(
+                {
+                    "feature_set": scenario_name,
+                    "feature_set_label": scenario.label,
+                    "feature_count": len(feature_columns),
+                    "model": model_name,
+                    "split": "validation",
+                    **calculate_regression_metrics(y_validation, predictions),
+                }
+            )
+            prediction_frames.append(
+                pd.DataFrame(
+                    {
+                        "feature_set": scenario_name,
+                        "feature_set_label": scenario.label,
+                        "model": model_name,
+                        "split": "validation",
+                        DATETIME_COLUMN: validation_timestamps.reset_index(drop=True),
+                        f"actual_{TARGET_COLUMN}": y_validation.reset_index(drop=True),
+                        f"predicted_{TARGET_COLUMN}": predictions,
+                    }
+                )
+            )
+
+    metrics = pd.DataFrame(metric_rows).sort_values(["model", "rmse"]).reset_index(drop=True)
+    predictions = pd.concat(prediction_frames, ignore_index=True)
+    return metrics, predictions, fitted_pipelines
+
+
+def build_feature_set_comparison(metrics: pd.DataFrame) -> pd.DataFrame:
+    """Rank validation feature scenarios and quantify RMSE improvement."""
+    required_columns = {"feature_set", "model", "split", "rmse"}
+    missing_columns = sorted(required_columns - set(metrics.columns))
+    if missing_columns:
+        raise ValueError(f"Missing feature set metric columns: {missing_columns}")
+
+    validation_metrics = metrics.loc[metrics["split"] == "validation"].copy()
+    if validation_metrics.empty:
+        raise ValueError("Feature set comparison requires validation metrics.")
+
+    validation_metrics["rank_within_model"] = (
+        validation_metrics.groupby("model")["rmse"].rank(method="dense").astype(int)
+    )
+    reference_rmse = (
+        validation_metrics.loc[
+            validation_metrics["feature_set"] == "temporal_calendar",
+            ["model", "rmse"],
+        ]
+        .rename(columns={"rmse": "temporal_calendar_rmse"})
+        .drop_duplicates("model")
+    )
+    comparison = validation_metrics.merge(reference_rmse, on="model", how="left")
+    if comparison["temporal_calendar_rmse"].isna().any():
+        raise ValueError("The temporal_calendar reference scenario is required.")
+
+    comparison["rmse_improvement_vs_temporal_calendar_pct"] = (
+        (comparison["temporal_calendar_rmse"] - comparison["rmse"])
+        / comparison["temporal_calendar_rmse"]
+        * 100
+    )
+    return comparison.sort_values(["model", "rank_within_model"]).reset_index(drop=True)
+
+
+def save_feature_set_experiment_results(
+    metrics: pd.DataFrame,
+    comparison: pd.DataFrame,
+    predictions: pd.DataFrame,
+    *,
+    metrics_path: str | Path = FEATURE_SET_METRICS_PATH,
+    comparison_path: str | Path = FEATURE_SET_COMPARISON_PATH,
+    predictions_path: str | Path = FEATURE_SET_PREDICTIONS_PATH,
+) -> tuple[Path, Path, Path]:
+    """Save feature set metrics, comparison, and validation predictions."""
+    destinations = (
+        Path(metrics_path),
+        Path(comparison_path),
+        Path(predictions_path),
+    )
+    for data, destination in zip(
+        (metrics, comparison, predictions),
+        destinations,
+        strict=True,
+    ):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        data.to_csv(destination, index=False)
+    return destinations
+
+
+def run_feature_set_experiment_pipeline(
+    *,
+    feature_data_path: str | Path = PROCESSED_DATA_PATH,
+    scenario_names: tuple[str, ...] | None = None,
+    model_registry: dict[str, RegressorMixin] | None = None,
+    metrics_path: str | Path = FEATURE_SET_METRICS_PATH,
+    comparison_path: str | Path = FEATURE_SET_COMPARISON_PATH,
+    predictions_path: str | Path = FEATURE_SET_PREDICTIONS_PATH,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, tuple[Path, Path, Path]]:
+    """Run validation-only feature set experiments on the shared prepared sample."""
+    source = Path(feature_data_path)
+    if not source.is_file():
+        raise FileNotFoundError(
+            f"Feature dataset not found: {source}. Run scripts/run_pipeline.py first."
+        )
+
+    feature_data = pd.read_csv(source, parse_dates=[DATETIME_COLUMN])
+    train_data, validation_data, _ = split_chronologically(feature_data)
+    metrics, predictions, _ = train_and_evaluate_feature_sets(
+        train_data,
+        validation_data,
+        scenario_names=scenario_names,
+        model_registry=model_registry,
+    )
+    comparison = build_feature_set_comparison(metrics)
+    output_paths = save_feature_set_experiment_results(
+        metrics,
+        comparison,
+        predictions,
+        metrics_path=metrics_path,
+        comparison_path=comparison_path,
+        predictions_path=predictions_path,
+    )
     return metrics, comparison, predictions, output_paths
 
 
