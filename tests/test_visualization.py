@@ -262,7 +262,13 @@ def test_model_evaluation_actual_vs_predicted_plots_all_candidate_models(tmp_pat
     )
 
     labels = [line.get_label() for line in axis.get_lines()]
-    assert {"Actual", "catboost", "xgboost", "random_forest", "voting_regressor"}.issubset(labels)
+    assert {
+        "Фактические значения",
+        "CatBoostRegressor",
+        "XGBRegressor",
+        "RandomForestRegressor",
+        "VotingRegressor",
+    }.issubset(labels)
     plt.close(figure)
 
 

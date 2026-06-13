@@ -52,6 +52,36 @@ FEATURE_IMPORTANCE_HIGHLIGHT_TOP_N = 3
 REFERENCE_LINE_COLOR = NEUTRAL_DARK_GRAY
 GRID_ALPHA = 0.25
 
+MODEL_DISPLAY_NAMES = {
+    "catboost": "CatBoostRegressor",
+    "xgboost": "XGBRegressor",
+    "random_forest": "RandomForestRegressor",
+    "voting_regressor": "VotingRegressor",
+}
+
+MODEL_GROUP_DISPLAY_NAMES = {
+    "strongest_individual": "Сильнейшая индивидуальная модель",
+    "extended_ensemble": "Расширенный ансамбль",
+}
+
+SPLIT_DISPLAY_NAMES = {
+    "train": "обучающая выборка",
+    "validation": "валидационная выборка",
+    "test": "тестовая выборка",
+}
+
+
+def _display_model_name(model_name: str) -> str:
+    return MODEL_DISPLAY_NAMES.get(model_name, model_name)
+
+
+def _display_model_group(group_name: str) -> str:
+    return MODEL_GROUP_DISPLAY_NAMES.get(group_name, group_name)
+
+
+def _display_split_name(split: str) -> str:
+    return SPLIT_DISPLAY_NAMES.get(split, split)
+
 
 def _build_label_palette(labels: list[str]) -> dict[str, str]:
     """Build a deterministic color mapping for categorical plot labels."""
@@ -122,9 +152,9 @@ def plot_traffic_volume_time_series(
         linewidth=1.2,
     )
     axis.set(
-        title=f"Observed Traffic Volume ({split.title()} Period)",
-        xlabel="Date and time",
-        ylabel="Traffic volume",
+        title=(f"Динамика фактической транспортной нагрузки ({_display_split_name(split)})"),
+        xlabel="Дата и время",
+        ylabel="Интенсивность транспортного потока",
     )
     axis.grid(alpha=GRID_ALPHA)
     figure.autofmt_xdate()
@@ -146,22 +176,23 @@ def plot_actual_vs_predicted(
     axis.plot(
         selected[DATETIME_COLUMN],
         selected[ACTUAL_COLUMN],
-        label="Actual",
+        label="Фактические значения",
         color=ACTUAL_LINE_COLOR,
         linewidth=1.3,
     )
     axis.plot(
         selected[DATETIME_COLUMN],
         selected[PREDICTED_COLUMN],
-        label="Predicted",
+        label="Прогнозные значения",
         color=PREDICTED_LINE_COLOR,
         linewidth=1.1,
         alpha=0.9,
     )
+    displayed_model_name = _display_model_name(model_name or str(selected["model"].iloc[0]))
     axis.set(
-        title=f"Actual vs Predicted Traffic Volume: {model_name or selected['model'].iloc[0]}",
-        xlabel="Date and time",
-        ylabel="Traffic volume",
+        title=(f"Фактические и прогнозные значения транспортной нагрузки: {displayed_model_name}"),
+        xlabel="Дата и время",
+        ylabel="Интенсивность транспортного потока",
     )
     axis.legend()
     axis.grid(alpha=GRID_ALPHA)
@@ -194,9 +225,9 @@ def plot_residual_distribution(
     )
     axis.axvline(0, color=REFERENCE_LINE_COLOR, linestyle="--", linewidth=1.2)
     axis.set(
-        title=f"Residual Distribution ({split.title()} Predictions)",
-        xlabel="Residual: actual - predicted",
-        ylabel="Count",
+        title=(f"Распределение остатков прогнозирования ({_display_split_name(split)})"),
+        xlabel="Остаток прогноза: фактическое значение − прогноз",
+        ylabel="Количество наблюдений",
     )
     figure.tight_layout()
     _save_figure(figure, output_path)
@@ -230,12 +261,12 @@ def plot_true_vs_predicted(
         color=REFERENCE_LINE_COLOR,
         linestyle="--",
         linewidth=1.2,
-        label="Ideal prediction",
+        label="Идеальный прогноз",
     )
     axis.set(
-        title=f"Observed vs Predicted Traffic Volume ({split.title()})",
-        xlabel="Observed traffic volume",
-        ylabel="Predicted traffic volume",
+        title=(f"Сопоставление фактических и прогнозных значений ({_display_split_name(split)})"),
+        xlabel="Фактическая транспортная нагрузка",
+        ylabel="Прогнозная транспортная нагрузка",
     )
     axis.legend()
     axis.grid(alpha=GRID_ALPHA)
@@ -286,9 +317,9 @@ def plot_error_by_hour(
         linewidth=0.6,
     )
     axis.set(
-        title=f"Mean Absolute Error by Hour ({split.title()})",
-        xlabel="Hour of day",
-        ylabel="Mean absolute error",
+        title=(f"Средняя абсолютная ошибка по часам суток ({_display_split_name(split)})"),
+        xlabel="Час суток",
+        ylabel="Средняя абсолютная ошибка",
     )
     axis.grid(axis="y", alpha=GRID_ALPHA)
     figure.tight_layout()
@@ -318,17 +349,24 @@ def plot_model_comparison(
 
     # For horizontal bar charts, the last row is displayed at the top.
     selected = selected.sort_values(metric, ascending=higher_is_better)
+    selected["model_display"] = selected["model"].map(_display_model_name)
 
     figure, axis = plt.subplots(figsize=(10, 7))
     colors = [
         MODEL_COMPARISON_HIGHLIGHT_COLOR if index == best_index else MODEL_COMPARISON_BASE_COLOR
         for index in selected.index
     ]
-    axis.barh(selected["model"], selected[metric], color=colors, edgecolor="white", linewidth=0.6)
+    axis.barh(
+        selected["model_display"],
+        selected[metric],
+        color=colors,
+        edgecolor="white",
+        linewidth=0.6,
+    )
     axis.set(
-        title=f"Model Comparison by {metric.upper()} ({split.title()})",
+        title=(f"Сравнение моделей по {metric.upper()} ({_display_split_name(split)})"),
         xlabel=metric.upper(),
-        ylabel="Model",
+        ylabel="Модель",
     )
     axis.grid(axis="x", alpha=GRID_ALPHA)
     figure.tight_layout()
@@ -367,9 +405,9 @@ def plot_feature_importance(
         linewidth=0.6,
     )
     axis.set(
-        title=f"Top {min(top_n, len(importance))} Model Feature Importances",
-        xlabel="Feature importance",
-        ylabel="Transformed feature",
+        title="Наиболее значимые признаки модели",
+        xlabel="Важность признака",
+        ylabel="Преобразованный признак",
     )
     axis.grid(axis="x", alpha=GRID_ALPHA)
     figure.tight_layout()
@@ -405,15 +443,17 @@ def plot_feature_set_comparison(
 
     model_order = [model for model in default_model_order if model in available_models]
     model_order.extend(sorted(available_models - set(default_model_order)))
+    selected["model_display"] = selected["model"].map(_display_model_name)
+    model_display_order = [_display_model_name(model) for model in model_order]
 
     figure, axis = plt.subplots(figsize=(14, 7))
     sns.barplot(
         data=selected,
         x="feature_set_label",
         y=metric,
-        hue="model",
+        hue="model_display",
         order=scenario_order,
-        hue_order=model_order,
+        hue_order=model_display_order,
         ax=axis,
         palette=(PASTEL_BLUE, PASTEL_PEACH, PASTEL_LAVENDER),
         saturation=1.0,
@@ -421,13 +461,13 @@ def plot_feature_set_comparison(
         linewidth=0.6,
     )
     axis.set(
-        title=f"Feature Set Comparison by {metric.upper()} ({split.title()})",
-        xlabel="Feature set scenario",
+        title=(f"Сравнение наборов признаков по {metric.upper()} ({_display_split_name(split)})"),
+        xlabel="Сценарий набора признаков",
         ylabel=metric.upper(),
     )
     axis.tick_params(axis="x", rotation=20)
     axis.grid(axis="y", alpha=GRID_ALPHA)
-    axis.legend(title="Model")
+    axis.legend(title="Модель")
     figure.tight_layout()
     _save_figure(figure, output_path)
     return figure, axis
@@ -450,6 +490,7 @@ def plot_extended_ensemble_comparison(
     if selected.empty:
         raise ValueError(f"No extended ensemble rows found for split: {split}")
     selected = selected.sort_values(metric, ascending=False)
+    selected["model_display"] = selected["model"].map(_display_model_name)
     colors = [
         (
             MODEL_COMPARISON_HIGHLIGHT_COLOR
@@ -461,16 +502,18 @@ def plot_extended_ensemble_comparison(
 
     figure, axis = plt.subplots(figsize=(10, 6))
     axis.barh(
-        selected["model"],
+        selected["model_display"],
         selected[metric],
         color=colors,
         edgecolor="white",
         linewidth=0.6,
     )
     axis.set(
-        title=f"Extended Ensemble Comparison by {metric.upper()} ({split.title()})",
+        title=(
+            f"Сравнение расширенного ансамбля по {metric.upper()} ({_display_split_name(split)})"
+        ),
         xlabel=metric.upper(),
-        ylabel="Model",
+        ylabel="Модель",
     )
     axis.grid(axis="x", alpha=GRID_ALPHA)
     axis.legend(
@@ -478,15 +521,15 @@ def plot_extended_ensemble_comparison(
             Patch(
                 facecolor=MODEL_COMPARISON_BASE_COLOR,
                 edgecolor="white",
-                label="Strongest individual",
+                label="Сильнейшая индивидуальная модель",
             ),
             Patch(
                 facecolor=MODEL_COMPARISON_HIGHLIGHT_COLOR,
                 edgecolor="white",
-                label="Extended ensemble",
+                label="Расширенный ансамбль",
             ),
         ],
-        title="Model group",
+        title="Группа модели",
         loc="upper left",
         bbox_to_anchor=(1.02, 1.0),
         borderaxespad=0.0,
@@ -515,16 +558,18 @@ def plot_locked_test_comparison(
     if selected["used_for_model_selection"].any():
         raise ValueError("Locked test metrics cannot be marked for model selection.")
 
-    group_order = selected["model_group"].drop_duplicates().tolist()
-    group_palette = _build_label_palette(group_order)
+    selected["model_display"] = selected["model"].map(_display_model_name)
+    selected["model_group_display"] = selected["model_group"].map(_display_model_group)
+    group_display_order = selected["model_group_display"].drop_duplicates().tolist()
+    group_palette = _build_label_palette(group_display_order)
 
     figure, axis = plt.subplots(figsize=(9, 6))
     sns.barplot(
         data=selected,
-        x="model",
+        x="model_display",
         y=metric,
-        hue="model_group",
-        hue_order=group_order,
+        hue="model_group_display",
+        hue_order=group_display_order,
         ax=axis,
         palette=group_palette,
         saturation=1.0,
@@ -532,12 +577,12 @@ def plot_locked_test_comparison(
         linewidth=0.6,
     )
     axis.set(
-        title=f"Locked Test Evaluation by {metric.upper()}",
-        xlabel="Validation-selected candidate",
+        title=f"Сравнение моделей-кандидатов по {metric.upper()} на тестовой выборке",
+        xlabel="Модель-кандидат",
         ylabel=metric.upper(),
     )
     axis.grid(axis="y", alpha=GRID_ALPHA)
-    axis.legend(title="Candidate group")
+    axis.legend(title="Группа модели")
     figure.tight_layout()
     _save_figure(figure, output_path)
     return figure, axis
@@ -571,7 +616,7 @@ def plot_model_evaluation_actual_vs_predicted(
     axis.plot(
         actual_by_timestamp[DATETIME_COLUMN],
         actual_by_timestamp[ACTUAL_COLUMN],
-        label="Actual",
+        label="Фактические значения",
         color=ACTUAL_LINE_COLOR,
         linewidth=1.4,
     )
@@ -583,16 +628,16 @@ def plot_model_evaluation_actual_vs_predicted(
         axis.plot(
             model_predictions[DATETIME_COLUMN],
             model_predictions[PREDICTED_COLUMN],
-            label=model_name,
+            label=_display_model_name(model_name),
             color=model_palette[model_name],
             linewidth=1.0,
             alpha=0.85,
         )
 
     axis.set(
-        title=f"Actual vs Validation-Selected Candidate Predictions ({split.title()})",
-        xlabel="Date and time",
-        ylabel="Traffic volume",
+        title=("Фактические и прогнозные значения транспортной нагрузки на тестовой выборке"),
+        xlabel="Дата и время",
+        ylabel="Интенсивность транспортного потока",
     )
     axis.legend()
     axis.grid(alpha=GRID_ALPHA)
@@ -614,15 +659,16 @@ def plot_residual_comparison(
     if selected.empty:
         raise ValueError(f"No prediction rows found for split: {split}")
 
-    model_order = selected["model"].drop_duplicates().tolist()
-    model_palette = _build_label_palette(model_order)
+    selected["model_display"] = selected["model"].map(_display_model_name)
+    model_display_order = selected["model_display"].drop_duplicates().tolist()
+    model_palette = _build_label_palette(model_display_order)
 
     figure, axis = plt.subplots(figsize=(10, 6))
     sns.histplot(
         data=selected,
         x=RESIDUAL_COLUMN,
-        hue="model",
-        hue_order=model_order,
+        hue="model_display",
+        hue_order=model_display_order,
         bins=40,
         element="step",
         stat="density",
@@ -632,10 +678,11 @@ def plot_residual_comparison(
     )
     axis.axvline(0, color=REFERENCE_LINE_COLOR, linestyle="--", linewidth=1.2)
     axis.set(
-        title=f"Residual Comparison ({split.title()} Predictions)",
-        xlabel="Residual: actual - predicted",
-        ylabel="Density",
+        title="Сравнение распределений остатков прогнозирования на тестовой выборке",
+        xlabel="Остаток прогноза: фактическое значение − прогноз",
+        ylabel="Плотность распределения",
     )
+    axis.get_legend().set_title("Модель")
     figure.tight_layout()
     _save_figure(figure, output_path)
     return figure, axis
@@ -657,25 +704,27 @@ def plot_error_by_hour_comparison(
     if selected.empty:
         raise ValueError(f"No hourly error rows found for split: {split}")
 
-    model_order = selected["model"].drop_duplicates().tolist()
-    model_palette = _build_label_palette(model_order)
+    selected["model_display"] = selected["model"].map(_display_model_name)
+    model_display_order = selected["model_display"].drop_duplicates().tolist()
+    model_palette = _build_label_palette(model_display_order)
 
     figure, axis = plt.subplots(figsize=(11, 6))
     sns.lineplot(
         data=selected,
         x="hour",
         y="mae",
-        hue="model",
-        hue_order=model_order,
+        hue="model_display",
+        hue_order=model_display_order,
         marker="o",
         ax=axis,
         palette=model_palette,
     )
     axis.set(
-        title=f"Mean Absolute Error by Hour ({split.title()})",
-        xlabel="Hour of day",
-        ylabel="Mean absolute error",
+        title="Средняя абсолютная ошибка по часам суток на тестовой выборке",
+        xlabel="Час суток",
+        ylabel="Средняя абсолютная ошибка",
     )
+    axis.get_legend().set_title("Модель")
     axis.set_xticks(range(24))
     axis.grid(alpha=GRID_ALPHA)
     figure.tight_layout()
@@ -705,25 +754,27 @@ def plot_large_errors(
         raise ValueError(f"No large-error rows found for split: {split}")
     selected[DATETIME_COLUMN] = pd.to_datetime(selected[DATETIME_COLUMN], errors="raise")
 
-    model_order = selected["model"].drop_duplicates().tolist()
-    model_palette = _build_label_palette(model_order)
+    selected["model_display"] = selected["model"].map(_display_model_name)
+    model_display_order = selected["model_display"].drop_duplicates().tolist()
+    model_palette = _build_label_palette(model_display_order)
 
     figure, axis = plt.subplots(figsize=(12, 6))
     sns.scatterplot(
         data=selected,
         x=DATETIME_COLUMN,
         y=ABSOLUTE_ERROR_COLUMN,
-        hue="model",
-        hue_order=model_order,
+        hue="model_display",
+        hue_order=model_display_order,
         alpha=0.75,
         ax=axis,
         palette=model_palette,
     )
     axis.set(
-        title=f"Large Prediction Errors ({split.title()} Predictions)",
-        xlabel="Date and time",
-        ylabel="Absolute error",
+        title="Крупные ошибки прогнозирования на тестовой выборке",
+        xlabel="Дата и время",
+        ylabel="Абсолютная ошибка",
     )
+    axis.get_legend().set_title("Модель")
     axis.grid(alpha=GRID_ALPHA)
     figure.autofmt_xdate()
     figure.tight_layout()
